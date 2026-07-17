@@ -1,0 +1,32 @@
+name: Build manuscript DOCX
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-docx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+      - name: Install Pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc
+      - name: Convert manuscript to DOCX
+        run: |
+          pandoc manuscript_health_resources_kazakhstan_final.doc \
+            --from=html \
+            --to=docx \
+            --output="Готовая_статья_ресурсы_и_нагрузка_здравоохранения_Казахстан.docx"
+      - name: Upload DOCX
+        uses: actions/upload-artifact@v4
+        with:
+          name: healthcare-manuscript-docx
+          path: Готовая_статья_ресурсы_и_нагрузка_здравоохранения_Казахстан.docx
+          if-no-files-found: error
