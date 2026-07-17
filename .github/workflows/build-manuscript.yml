@@ -6,14 +6,24 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-docx:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout pull request
+      - name: Checkout pull request branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Check whether DOCX is already committed
+        run: |
+          if git ls-files --error-unmatch "Готовая_статья_ресурсы_и_нагрузка_здравоохранения_Казахстан.docx" >/dev/null 2>&1; then
+            echo "COMMIT_DOCX=false" >> "$GITHUB_ENV"
+          else
+            echo "COMMIT_DOCX=true" >> "$GITHUB_ENV"
+          fi
       - name: Install Pandoc
         run: |
           sudo apt-get update
@@ -30,3 +40,11 @@ jobs:
           name: healthcare-manuscript-docx
           path: Готовая_статья_ресурсы_и_нагрузка_здравоохранения_Казахстан.docx
           if-no-files-found: error
+      - name: Commit DOCX to pull request branch
+        if: env.COMMIT_DOCX == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "Готовая_статья_ресурсы_и_нагрузка_здравоохранения_Казахстан.docx"
+          git commit -m "Add generated publication-ready DOCX"
+          git push origin "HEAD:${{ github.head_ref }}"
