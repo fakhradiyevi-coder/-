@@ -1,0 +1,211 @@
+name: Smoke Test Heart Sounds App
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/smoke-test-heart-sounds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Load and execute app build recipe
+        run: |
+          git fetch origin ahs-apk-build:refs/remotes/origin/ahs-apk-build
+          git show origin/ahs-apk-build:.github/workflows/build-heart-sounds-apk.yml > /tmp/heart-build.yml
+          python3 -m pip install --quiet pyyaml
+          cat > /tmp/run_recipe.py <<'PY'
+          import os, subprocess, yaml
+          with open('/tmp/heart-build.yml', 'r', encoding='utf-8') as f:
+              data = yaml.safe_load(f)
+          steps = data['jobs']['build-apk']['steps']
+          for index, step in enumerate(steps, 1):
+              script = step.get('run')
+              if not script:
+                  continue
+              name = step.get('name', f'step-{index}')
+              if name == 'Install Android SDK':
+                  script = 'sdkmanager "platforms;android-36" "build-tools;35.0.0"'
+              workdir = step.get('working-directory', '.')
+              print(f'\n===== {name} =====', flush=True)
+              subprocess.run(['bash', '-e', '-c', script], cwd=workdir, check=True, env=os.environ.copy())
+          PY
+          python3 /tmp/run_recipe.py
+
+      - name: Create UI smoke-test script
+        run: |
+          mkdir -p evidence
+          cat > /tmp/ui_smoke.py <<'PY'
+          import os, re, subprocess, time, xml.etree.ElementTree as ET
+
+          PKG = 'kz.edu.kaznmu.heartsounds'
+          ACT = PKG + '/.MainActivity'
+          EVIDENCE = 'evidence'
+          os.makedirs(EVIDENCE, exist_ok=True)
+
+          def sh(*args, check=True, capture=True):
+              p = subprocess.run(args, text=True, capture_output=capture, check=check)
+              return p.stdout if capture else ''
+
+          def adb(*args, check=True):
+              return sh('adb', *args, check=check)
+
+          def screenshot(name):
+              with open(os.path.join(EVIDENCE, name), 'wb') as f:
+                  subprocess.run(['adb', 'exec-out', 'screencap', '-p'], stdout=f, check=True)
+
+          def dump(name='window.xml'):
+              adb('shell', 'uiautomator', 'dump', '/sdcard/window.xml')
+              adb('pull', '/sdcard/window.xml', os.path.join(EVIDENCE, name))
+              return ET.parse(os.path.join(EVIDENCE, name)).getroot()
+
+          def node_texts(root):
+              return [n.attrib.get('text','') for n in root.iter('node')]
+
+          def find_node(root, exact=None, contains=None):
+              for n in root.iter('node'):
+                  t = n.attrib.get('text','')
+                  if exact is not None and t == exact:
+                      return n
+                  if contains is not None and contains in t:
+                      return n
+              return None
+
+          def center(node):
+              b = node.attrib.get('bounds','')
+              m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', b)
+              if not m:
+                  raise AssertionError('No usable bounds: ' + b)
+              x1,y1,x2,y2 = map(int,m.groups())
+              return (x1+x2)//2, (y1+y2)//2
+
+          def tap_node(node):
+              x,y = center(node)
+              adb('shell','input','tap',str(x),str(y))
+              time.sleep(1.2)
+
+          def find_with_scroll(exact=None, contains=None, direction='up', attempts=8):
+              for i in range(attempts):
+                  r = dump(f'scroll_{direction}_{i}.xml')
+                  n = find_node(r, exact=exact, contains=contains)
+                  if n is not None:
+                      return n
+                  if direction == 'up':
+                      adb('shell','input','swipe','540','1750','540','500','350')
+                  else:
+                      adb('shell','input','swipe','540','500','540','1750','350')
+                  time.sleep(0.6)
+              return None
+
+          adb('logcat','-c')
+          out = adb('install','-r','Asfendiyarov_Heart_Sounds_v1.0.apk')
+          assert 'Success' in out, out
+          started = adb('shell','am','start','-W','-n',ACT)
+          assert 'Status: ok' in started, started
+          time.sleep(2.5)
+
+          root = dump('home.xml')
+          texts = node_texts(root)
+          assert any('Тренажёр аускультации сердца' in t for t in texts), texts
+          assert any('Открыть настройки Bluetooth' in t for t in texts), texts
+          assert any('Bluetooth-колонка не обнаружена' in t for t in texts), texts
+          screenshot('01_home.png')
+
+          bt = find_node(root, exact='Открыть настройки Bluetooth')
+          assert bt is not None
+          tap_node(bt)
+          resumed = adb('shell','dumpsys','activity','activities')
+          assert 'com.android.settings' in resumed, resumed[-5000:]
+          screenshot('02_bluetooth_settings.png')
+          adb('shell','input','keyevent','4')
+          time.sleep(1.2)
+
+          play = find_with_scroll(exact='▶  Воспроизвести с повтором', direction='up')
+          assert play is not None, 'Play button not found'
+          tap_node(play)
+          root = dump('playing.xml')
+          texts = node_texts(root)
+          assert any('Сейчас звучит: Нормальные тоны сердца' in t for t in texts), texts
+          assert any('Сейчас воспроизводится' in t for t in texts), texts
+          screenshot('03_playing.png')
+
+          pause = find_with_scroll(exact='Пауза / продолжить', direction='down')
+          assert pause is not None, 'Pause button not found'
+          tap_node(pause)
+          root = dump('paused.xml')
+          texts = node_texts(root)
+          assert any('Пауза: Нормальные тоны сердца' in t for t in texts), texts
+          screenshot('04_paused.png')
+
+          pause = find_node(root, exact='Пауза / продолжить')
+          assert pause is not None
+          tap_node(pause)
+          root = dump('resumed.xml')
+          texts = node_texts(root)
+          assert any('Сейчас звучит: Нормальные тоны сердца' in t for t in texts), texts
+
+          stop = find_node(root, exact='Стоп')
+          assert stop is not None
+          tap_node(stop)
+          root = dump('stopped.xml')
+          texts = node_texts(root)
+          assert any('Воспроизведение остановлено' in t for t in texts), texts
+          screenshot('05_stopped.png')
+
+          package = adb('shell','dumpsys','package',PKG)
+          with open(os.path.join(EVIDENCE,'package.txt'),'w',encoding='utf-8') as f:
+              f.write(package)
+          assert 'versionName=1.0.0' in package
+          assert 'targetSdk=36' in package
+
+          logs = adb('logcat','-d')
+          with open(os.path.join(EVIDENCE,'logcat.txt'),'w',encoding='utf-8') as f:
+              f.write(logs)
+          bad = []
+          for line in logs.splitlines():
+              if ('FATAL EXCEPTION' in line or 'AndroidRuntime' in line) and PKG in logs:
+                  bad.append(line)
+          assert not bad, '\n'.join(bad)
+
+          print('ALL_SMOKE_TESTS_PASSED')
+          PY
+
+      - name: Run app in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: python3 /tmp/ui_smoke.py
+
+      - name: Upload smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Heart-Sounds-Smoke-Test-Evidence
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 7
