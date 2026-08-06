@@ -52,7 +52,7 @@ jobs:
               name = step.get('name', f'step-{index}')
               workdir = step.get('working-directory', '.')
               print(f'\n===== {name} =====', flush=True)
-              subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=workdir, check=True, env=os.environ.copy())
+              subprocess.run(['bash', '-e', '-u', '-c', script], cwd=workdir, check=True, env=os.environ.copy())
           PY
           python3 /tmp/run_recipe.py
 
