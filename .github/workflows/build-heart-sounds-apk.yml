@@ -1,0 +1,616 @@
+name: Build Asfendiyarov Heart Sounds APK
+
+on:
+  push:
+    branches:
+      - ahs-apk-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Create Android project
+        run: |
+          mkdir -p HeartSounds/app/src/main/java/kz/edu/kaznmu/heartsounds
+          mkdir -p HeartSounds/app/src/main/res/raw
+          mkdir -p HeartSounds/app/src/main/res/drawable
+          mkdir -p HeartSounds/app/src/main/res/values
+
+          cat > HeartSounds/settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AsfendiyarovHeartSounds"
+          include(":app")
+          EOF
+
+          cat > HeartSounds/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.13.2" apply false
+          }
+          EOF
+
+          cat > HeartSounds/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=false
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > HeartSounds/app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+          }
+
+          android {
+              namespace = "kz.edu.kaznmu.heartsounds"
+              compileSdk = 36
+
+              defaultConfig {
+                  applicationId = "kz.edu.kaznmu.heartsounds"
+                  minSdk = 23
+                  targetSdk = 36
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          touch HeartSounds/app/proguard-rules.pro
+
+          cat > HeartSounds/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/asfendiyarov_logo"
+                  android:roundIcon="@drawable/asfendiyarov_logo"
+                  android:label="Звуки сердца"
+                  android:supportsRtl="true"
+                  android:theme="@style/AppTheme">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > HeartSounds/app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:statusBarColor">#67335F</item>
+                  <item name="android:navigationBarColor">#FFF9FD</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:colorAccent">#8B4580</item>
+                  <item name="android:windowBackground">#FFF9FD</item>
+              </style>
+          </resources>
+          EOF
+
+          curl -L --fail --retry 3 \
+            "https://kaznmu.edu.kz/wp-content/uploads/2024/03/cropped-logo-4.png" \
+            -o HeartSounds/app/src/main/res/drawable/asfendiyarov_logo.png || true
+
+          if [ ! -s HeartSounds/app/src/main/res/drawable/asfendiyarov_logo.png ]; then
+            python3 - <<'PY'
+          import struct, zlib
+          w, h = 512, 512
+          raw = bytearray()
+          for y in range(h):
+              raw.append(0)
+              for x in range(w):
+                  if 35 < x < 477 and 35 < y < 477:
+                      raw.extend((139, 69, 128, 255))
+                  else:
+                      raw.extend((255, 255, 255, 255))
+          def chunk(t, d):
+              return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t+d) & 0xffffffff)
+          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w,h,8,6,0,0,0)) + chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b'')
+          open('HeartSounds/app/src/main/res/drawable/asfendiyarov_logo.png','wb').write(png)
+          PY
+          fi
+
+      - name: Generate educational heart sounds
+        run: |
+          cat > /tmp/generate_sounds.py <<'PY'
+          import math, random, struct, wave, os
+
+          SR = 22050
+          DURATION = 18.0
+          BPM = 72
+          PERIOD = 60.0 / BPM
+          OUT = 'HeartSounds/app/src/main/res/raw'
+          os.makedirs(OUT, exist_ok=True)
+          random.seed(1930)
+
+          def pulse(t, center, width, freq, amp):
+              d = t - center
+              return amp * math.exp(-(d*d)/(2*width*width)) * math.sin(2*math.pi*freq*d)
+
+          def band_noise(t, start, end, amp, freq=95):
+              if not (start <= t <= end):
+                  return 0.0
+              x = (t-start)/(end-start)
+              env = math.sin(math.pi*x) ** 0.65
+              n = (random.random()*2-1)
+              carrier = 0.65*math.sin(2*math.pi*freq*t) + 0.35*math.sin(2*math.pi*(freq*1.7)*t)
+              return amp * env * (0.52*n + 0.48*carrier)
+
+          def dec_noise(t, start, end, amp, freq=115):
+              if not (start <= t <= end):
+                  return 0.0
+              x = (t-start)/(end-start)
+              env = (1-x) ** 1.7
+              return amp * env * (0.55*(random.random()*2-1) + 0.45*math.sin(2*math.pi*freq*t))
+
+          def synth(kind):
+              samples = []
+              for i in range(int(SR*DURATION)):
+                  t = i/SR
+                  c = t % PERIOD
+                  s1 = pulse(c, 0.08, 0.020, 62, 0.85) + pulse(c, 0.105, 0.026, 42, 0.45)
+                  s2 = pulse(c, 0.39, 0.017, 78, 0.72) + pulse(c, 0.412, 0.020, 54, 0.32)
+                  y = s1 + s2
+
+                  if kind == 'normal_s1_s2':
+                      pass
+                  elif kind == 'aortic_stenosis':
+                      y += band_noise(c, 0.12, 0.36, 0.95, 135)
+                  elif kind == 'aortic_regurgitation':
+                      y += dec_noise(c, 0.43, 0.70, 0.78, 150)
+                  elif kind == 'mitral_stenosis':
+                      y += pulse(c, 0.49, 0.010, 115, 0.58)
+                      y += band_noise(c, 0.53, 0.79, 0.62, 70)
+                      y += pulse(c, 0.76, 0.018, 48, 0.38)
+                  elif kind == 'mitral_regurgitation':
+                      y += band_noise(c, 0.105, 0.385, 0.88, 120)
+                  elif kind == 'mitral_valve_prolapse':
+                      y += pulse(c, 0.25, 0.006, 190, 0.75)
+                      y += band_noise(c, 0.27, 0.385, 0.70, 135)
+                  elif kind == 'pulmonary_stenosis':
+                      y += band_noise(c, 0.13, 0.35, 0.80, 120)
+                      y += pulse(c, 0.115, 0.007, 170, 0.45)
+                  elif kind == 'pulmonary_regurgitation':
+                      y += dec_noise(c, 0.44, 0.68, 0.66, 132)
+                  elif kind == 'tricuspid_regurgitation':
+                      y += band_noise(c, 0.105, 0.39, 0.74, 105)
+                  elif kind == 'ventricular_septal_defect':
+                      y += band_noise(c, 0.09, 0.405, 1.00, 155)
+                  elif kind == 'atrial_septal_defect':
+                      y += band_noise(c, 0.14, 0.31, 0.48, 105)
+                      y += pulse(c, 0.39, 0.014, 84, 0.42) + pulse(c, 0.445, 0.014, 76, 0.42)
+                  elif kind == 'patent_ductus_arteriosus':
+                      y += band_noise(c, 0.15, 0.72, 0.67, 118)
+                      y += band_noise(c, 0.29, 0.53, 0.35, 170)
+                  elif kind == 'tetralogy_of_fallot':
+                      y += band_noise(c, 0.11, 0.33, 0.92, 128)
+                      y -= 0.30*s2
+                  elif kind == 's3_gallop':
+                      y += pulse(c, 0.53, 0.022, 34, 0.68)
+                  elif kind == 's4_gallop':
+                      y += pulse(c, PERIOD-0.06, 0.022, 32, 0.68)
+
+                  y *= 0.52
+                  y = max(-1.0, min(1.0, y))
+                  samples.append(int(y*32767))
+              return samples
+
+          names = [
+              'normal_s1_s2', 'aortic_stenosis', 'aortic_regurgitation',
+              'mitral_stenosis', 'mitral_regurgitation', 'mitral_valve_prolapse',
+              'pulmonary_stenosis', 'pulmonary_regurgitation', 'tricuspid_regurgitation',
+              'ventricular_septal_defect', 'atrial_septal_defect',
+              'patent_ductus_arteriosus', 'tetralogy_of_fallot',
+              's3_gallop', 's4_gallop'
+          ]
+
+          for name in names:
+              path = os.path.join(OUT, name + '.wav')
+              with wave.open(path, 'wb') as f:
+                  f.setnchannels(1)
+                  f.setsampwidth(2)
+                  f.setframerate(SR)
+                  f.writeframes(struct.pack('<' + 'h'*int(SR*DURATION), *synth(name)))
+              print(path)
+          PY
+          python3 /tmp/generate_sounds.py
+
+      - name: Write application code
+        run: |
+          cat > HeartSounds/app/src/main/java/kz/edu/kaznmu/heartsounds/MainActivity.java <<'EOF'
+          package kz.edu.kaznmu.heartsounds;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.media.AudioDeviceInfo;
+          import android.media.AudioManager;
+          import android.media.MediaPlayer;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.widget.Button;
+          import android.widget.ImageView;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.SeekBar;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          public class MainActivity extends Activity {
+              private static final int PURPLE = Color.rgb(139, 69, 128);
+              private static final int PURPLE_DARK = Color.rgb(103, 51, 95);
+              private static final int SURFACE = Color.rgb(255, 249, 253);
+              private static final int TEXT = Color.rgb(37, 27, 36);
+              private static final int MUTED = Color.rgb(108, 91, 105);
+
+              private MediaPlayer player;
+              private Button activeButton;
+              private TextView nowPlaying;
+              private TextView bluetoothStatus;
+              private SeekBar volumeSeek;
+              private SoundItem currentSound;
+
+              private final SoundItem[] sounds = new SoundItem[]{
+                  new SoundItem("Нормальные тоны сердца", "S1–S2, синусовый ритм", "Нормальный сердечный цикл", "Все стандартные точки аускультации", "Базовая учебная запись первого и второго тонов сердца.", R.raw.normal_s1_s2),
+                  new SoundItem("Аортальный стеноз", "Систолический шум изгнания", "Систола: crescendo–decrescendo", "II межреберье справа у края грудины; проведение на сонные артерии", "Грубый ромбовидный систолический шум с ослаблением второго тона.", R.raw.aortic_stenosis),
+                  new SoundItem("Аортальная недостаточность", "Ранний диастолический шум", "Диастола: decrescendo", "III–IV межреберье слева у края грудины, сидя с наклоном вперёд", "Высокочастотный убывающий шум сразу после второго тона.", R.raw.aortic_regurgitation),
+                  new SoundItem("Митральный стеноз", "Щелчок открытия и диастолический рокот", "Диастола", "Верхушка сердца, положение на левом боку, колокол стетоскопа", "Щелчок открытия митрального клапана и низкочастотный диастолический рокот.", R.raw.mitral_stenosis),
+                  new SoundItem("Митральная недостаточность", "Голосистолический шум", "Вся систола", "Верхушка сердца; проведение в левую подмышечную область", "Равномерный пансистолический шум между первым и вторым тонами.", R.raw.mitral_regurgitation),
+                  new SoundItem("Пролапс митрального клапана", "Среднесистолический щелчок и поздний шум", "Поздняя систола", "Верхушка сердца", "Характерный щелчок в середине систолы с последующим нарастающим шумом.", R.raw.mitral_valve_prolapse),
+                  new SoundItem("Стеноз лёгочной артерии", "Систолический шум изгнания", "Систола", "II межреберье слева у края грудины", "Систолический шум с возможным щелчком изгнания и расщеплением второго тона.", R.raw.pulmonary_stenosis),
+                  new SoundItem("Недостаточность клапана лёгочной артерии", "Ранний диастолический шум", "Диастола", "II–III межреберье слева у края грудины", "Убывающий раннедиастолический шум в лёгочной точке.", R.raw.pulmonary_regurgitation),
+                  new SoundItem("Трикуспидальная недостаточность", "Голосистолический шум", "Вся систола", "Нижний левый край грудины; усиливается на вдохе", "Пансистолический шум в зоне трикуспидального клапана.", R.raw.tricuspid_regurgitation),
+                  new SoundItem("Дефект межжелудочковой перегородки", "Грубый голосистолический шум", "Вся систола", "III–IV межреберье слева у края грудины", "Интенсивный высокочастотный пансистолический шум.", R.raw.ventricular_septal_defect),
+                  new SoundItem("Дефект межпредсердной перегородки", "Фиксированное расщепление S2", "Систола и второй тон", "II межреберье слева у края грудины", "Систолический потоковый шум и устойчивое расщепление второго тона.", R.raw.atrial_septal_defect),
+                  new SoundItem("Открытый артериальный проток", "Непрерывный «машинный» шум", "Систола и диастола", "Левая подключичная область / II межреберье слева", "Непрерывный шум, проходящий через второй тон.", R.raw.patent_ductus_arteriosus),
+                  new SoundItem("Тетрада Фалло", "Грубый систолический шум", "Систола", "Левый край грудины", "Систолический шум обструкции выходного тракта правого желудочка с одиночным вторым тоном.", R.raw.tetralogy_of_fallot),
+                  new SoundItem("Третий тон сердца — S3", "Протодиастолический дополнительный тон", "Ранняя диастола", "Верхушка сердца, колокол стетоскопа", "Низкочастотный третий тон вскоре после S2.", R.raw.s3_gallop),
+                  new SoundItem("Четвёртый тон сердца — S4", "Пресистолический дополнительный тон", "Конец диастолы", "Верхушка сердца, колокол стетоскопа", "Низкочастотный четвёртый тон непосредственно перед S1.", R.raw.s4_gallop)
+              };
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setVolumeControlStream(AudioManager.STREAM_MUSIC);
+                  setContentView(buildContent());
+                  setupVolume();
+                  updateBluetoothStatus();
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  updateBluetoothStatus();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  releasePlayer();
+                  super.onDestroy();
+              }
+
+              private View buildContent() {
+                  ScrollView scroll = new ScrollView(this);
+                  scroll.setFillViewport(true);
+                  scroll.setBackgroundColor(SURFACE);
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(dp(18), dp(20), dp(18), dp(32));
+                  scroll.addView(root, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                  ImageView logo = new ImageView(this);
+                  logo.setImageResource(R.drawable.asfendiyarov_logo);
+                  logo.setAdjustViewBounds(true);
+                  logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                  root.addView(logo, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(110)));
+
+                  TextView university = text("ASFENDIYAROV UNIVERSITY 1930", 17, PURPLE_DARK, true);
+                  university.setGravity(Gravity.CENTER);
+                  root.addView(university, margins(-1, -2, 0, 4, 0, 8));
+
+                  TextView title = text("Тренажёр аускультации сердца", 25, TEXT, true);
+                  title.setGravity(Gravity.CENTER);
+                  root.addView(title, margins(-1, -2, 0, 0, 0, 8));
+
+                  TextView subtitle = text("15 учебных звуков • автономная работа • Bluetooth-колонка", 14, MUTED, false);
+                  subtitle.setGravity(Gravity.CENTER);
+                  root.addView(subtitle, margins(-1, -2, 0, 0, 0, 18));
+
+                  LinearLayout btCard = new LinearLayout(this);
+                  btCard.setOrientation(LinearLayout.VERTICAL);
+                  btCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+                  btCard.setBackground(rounded(Color.WHITE, dp(16), Color.rgb(231,214,226), dp(1)));
+                  root.addView(btCard, margins(-1,-2,0,0,0,16));
+
+                  bluetoothStatus = text("Проверка аудиовыхода…", 15, TEXT, true);
+                  btCard.addView(bluetoothStatus);
+                  TextView btHint = text("Сначала подключите колонку в настройках телефона. После подключения звук приложения будет направляться на неё автоматически.", 13, MUTED, false);
+                  btHint.setPadding(0, dp(5), 0, dp(12));
+                  btCard.addView(btHint);
+                  Button btButton = primaryButton("Открыть настройки Bluetooth");
+                  btButton.setOnClickListener(v -> {
+                      try { startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)); }
+                      catch (Exception e) { Toast.makeText(this, "Откройте Bluetooth в настройках телефона", Toast.LENGTH_LONG).show(); }
+                  });
+                  btCard.addView(btButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+                  LinearLayout playerCard = new LinearLayout(this);
+                  playerCard.setOrientation(LinearLayout.VERTICAL);
+                  playerCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+                  playerCard.setBackground(rounded(Color.rgb(246,235,244), dp(16), Color.TRANSPARENT, 0));
+                  root.addView(playerCard, margins(-1,-2,0,0,0,18));
+                  nowPlaying = text("Выберите звук из списка", 16, PURPLE_DARK, true);
+                  playerCard.addView(nowPlaying);
+
+                  LinearLayout controls = new LinearLayout(this);
+                  controls.setOrientation(LinearLayout.HORIZONTAL);
+                  controls.setGravity(Gravity.CENTER_VERTICAL);
+                  controls.setPadding(0, dp(12), 0, 0);
+                  Button pause = secondaryButton("Пауза / продолжить");
+                  pause.setOnClickListener(v -> togglePause());
+                  Button stop = secondaryButton("Стоп");
+                  stop.setOnClickListener(v -> stopPlayback());
+                  controls.addView(pause, new LinearLayout.LayoutParams(0, dp(44), 1));
+                  LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(0, dp(44), 0.55f);
+                  stopLp.setMargins(dp(8),0,0,0);
+                  controls.addView(stop, stopLp);
+                  playerCard.addView(controls);
+
+                  TextView volumeLabel = text("Громкость мультимедиа", 13, MUTED, false);
+                  volumeLabel.setPadding(0, dp(10), 0, 0);
+                  playerCard.addView(volumeLabel);
+                  volumeSeek = new SeekBar(this);
+                  playerCard.addView(volumeSeek, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+
+                  TextView listTitle = text("Звуки и пороки сердца", 20, TEXT, true);
+                  root.addView(listTitle, margins(-1,-2,0,0,0,10));
+
+                  for (SoundItem sound : sounds) root.addView(createSoundCard(sound), margins(-1,-2,0,0,0,12));
+
+                  TextView note = text("Учебная модель. Звуки синтезированы для тренировки и не предназначены для клинической диагностики.", 12, MUTED, false);
+                  note.setGravity(Gravity.CENTER);
+                  note.setPadding(dp(8), dp(8), dp(8), 0);
+                  root.addView(note);
+                  return scroll;
+              }
+
+              private View createSoundCard(SoundItem s) {
+                  LinearLayout card = new LinearLayout(this);
+                  card.setOrientation(LinearLayout.VERTICAL);
+                  card.setPadding(dp(16), dp(14), dp(16), dp(14));
+                  card.setBackground(rounded(Color.WHITE, dp(16), Color.rgb(236,222,232), dp(1)));
+
+                  card.addView(text(s.title, 17, TEXT, true));
+                  TextView st = text(s.subtitle, 14, PURPLE_DARK, true);
+                  st.setPadding(0, dp(3), 0, dp(7));
+                  card.addView(st);
+                  card.addView(text("Фаза: " + s.phase, 13, MUTED, false));
+                  TextView point = text("Точка: " + s.point, 13, MUTED, false);
+                  point.setPadding(0, dp(3), 0, dp(5));
+                  card.addView(point);
+                  card.addView(text(s.description, 13, TEXT, false));
+
+                  Button play = primaryButton("▶  Воспроизвести с повтором");
+                  play.setOnClickListener(v -> playSound(s, play));
+                  card.addView(play, margins(-1, dp(48), 0, 12, 0, 0));
+                  return card;
+              }
+
+              private void playSound(SoundItem sound, Button button) {
+                  releasePlayer();
+                  currentSound = sound;
+                  player = MediaPlayer.create(this, sound.rawRes);
+                  if (player == null) {
+                      Toast.makeText(this, "Не удалось открыть аудиофайл", Toast.LENGTH_LONG).show();
+                      return;
+                  }
+                  player.setLooping(true);
+                  player.start();
+                  nowPlaying.setText("Сейчас звучит: " + sound.title);
+                  activeButton = button;
+                  button.setText("■  Сейчас воспроизводится");
+              }
+
+              private void togglePause() {
+                  if (player == null) return;
+                  if (player.isPlaying()) {
+                      player.pause();
+                      nowPlaying.setText("Пауза: " + currentSound.title);
+                  } else {
+                      player.start();
+                      nowPlaying.setText("Сейчас звучит: " + currentSound.title);
+                  }
+              }
+
+              private void stopPlayback() {
+                  releasePlayer();
+                  nowPlaying.setText("Воспроизведение остановлено");
+              }
+
+              private void releasePlayer() {
+                  if (player != null) {
+                      try { player.stop(); } catch (Exception ignored) {}
+                      player.release();
+                      player = null;
+                  }
+                  if (activeButton != null) {
+                      activeButton.setText("▶  Воспроизвести с повтором");
+                      activeButton = null;
+                  }
+              }
+
+              private void setupVolume() {
+                  AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                  int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                  int current = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                  volumeSeek.setMax(max);
+                  volumeSeek.setProgress(current);
+                  volumeSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                      @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                          if (fromUser) am.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0);
+                      }
+                      @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                      @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+                  });
+              }
+
+              private void updateBluetoothStatus() {
+                  if (bluetoothStatus == null) return;
+                  AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                  boolean bluetooth = false;
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+                          int type = d.getType();
+                          if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                              || (Build.VERSION.SDK_INT >= 31 && (type == AudioDeviceInfo.TYPE_BLE_HEADSET || type == AudioDeviceInfo.TYPE_BLE_SPEAKER))) {
+                              bluetooth = true;
+                              break;
+                          }
+                      }
+                  }
+                  bluetoothStatus.setText(bluetooth ? "● Bluetooth-аудиоустройство подключено" : "○ Bluetooth-колонка не обнаружена");
+                  bluetoothStatus.setTextColor(bluetooth ? Color.rgb(33, 120, 75) : PURPLE_DARK);
+              }
+
+              private TextView text(String value, int sp, int color, boolean bold) {
+                  TextView tv = new TextView(this);
+                  tv.setText(value);
+                  tv.setTextSize(sp);
+                  tv.setTextColor(color);
+                  tv.setLineSpacing(0, 1.08f);
+                  if (bold) tv.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                  return tv;
+              }
+
+              private Button primaryButton(String label) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  b.setTextColor(Color.WHITE);
+                  b.setTextSize(14);
+                  b.setAllCaps(false);
+                  b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                  b.setGravity(Gravity.CENTER);
+                  b.setPadding(dp(12),0,dp(12),0);
+                  b.setBackground(rounded(PURPLE, dp(12), Color.TRANSPARENT, 0));
+                  return b;
+              }
+
+              private Button secondaryButton(String label) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  b.setTextColor(PURPLE_DARK);
+                  b.setTextSize(13);
+                  b.setAllCaps(false);
+                  b.setGravity(Gravity.CENTER);
+                  b.setPadding(dp(8),0,dp(8),0);
+                  b.setBackground(rounded(Color.WHITE, dp(11), Color.rgb(214,187,207), dp(1)));
+                  return b;
+              }
+
+              private GradientDrawable rounded(int fill, int radius, int stroke, int strokeWidth) {
+                  GradientDrawable d = new GradientDrawable();
+                  d.setColor(fill);
+                  d.setCornerRadius(radius);
+                  if (strokeWidth > 0) d.setStroke(strokeWidth, stroke);
+                  return d;
+              }
+
+              private LinearLayout.LayoutParams margins(int width, int height, int left, int top, int right, int bottom) {
+                  int w = width == -1 ? ViewGroup.LayoutParams.MATCH_PARENT : width;
+                  int h = height == -2 ? ViewGroup.LayoutParams.WRAP_CONTENT : height;
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w, h);
+                  lp.setMargins(dp(left), dp(top), dp(right), dp(bottom));
+                  return lp;
+              }
+
+              private int dp(int v) {
+                  return Math.round(v * getResources().getDisplayMetrics().density);
+              }
+
+              private static class SoundItem {
+                  final String title, subtitle, phase, point, description;
+                  final int rawRes;
+                  SoundItem(String title, String subtitle, String phase, String point, String description, int rawRes) {
+                      this.title = title;
+                      this.subtitle = subtitle;
+                      this.phase = phase;
+                      this.point = point;
+                      this.description = description;
+                      this.rawRes = rawRes;
+                  }
+              }
+          }
+          EOF
+
+      - name: Build installable APK
+        working-directory: HeartSounds
+        run: gradle --no-daemon assembleDebug
+
+      - name: Rename installer
+        run: cp HeartSounds/app/build/outputs/apk/debug/app-debug.apk Asfendiyarov_Heart_Sounds_v1.0.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Asfendiyarov-Heart-Sounds-Installer
+          path: Asfendiyarov_Heart_Sounds_v1.0.apk
+          if-no-files-found: error
+          retention-days: 7
