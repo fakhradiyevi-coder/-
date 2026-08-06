@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
     paths:
       - ".github/workflows/smoke-test-heart-sounds.yml"
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -182,11 +184,7 @@ jobs:
           logs = adb('logcat','-d')
           with open(os.path.join(EVIDENCE,'logcat.txt'),'w',encoding='utf-8') as f:
               f.write(logs)
-          bad = []
-          for line in logs.splitlines():
-              if ('FATAL EXCEPTION' in line or 'AndroidRuntime' in line) and PKG in logs:
-                  bad.append(line)
-          assert not bad, '\n'.join(bad)
+          assert 'FATAL EXCEPTION' not in logs
 
           print('ALL_SMOKE_TESTS_PASSED')
           PY
