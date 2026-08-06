@@ -1,0 +1,109 @@
+name: Package Heart Sounds v1.2 Fast
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "heart-sounds-v1.2/**"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Prepare logo and live recordings
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p heart-sounds-v1.2/app/src/main/res/drawable heart-sounds-v1.2/app/src/main/res/raw
+          curl -L --fail --retry 4 "https://kaznmu.edu.kz/wp-content/uploads/2024/03/cropped-logo-4.png" -o heart-sounds-v1.2/app/src/main/res/drawable/university_logo.png || true
+          if [ ! -s heart-sounds-v1.2/app/src/main/res/drawable/university_logo.png ]; then
+            python3 - <<'PY'
+          import struct,zlib
+          from pathlib import Path
+          w,h=640,240; raw=bytearray()
+          for y in range(h):
+              raw.append(0)
+              for x in range(w): raw.extend((139,69,128,255) if 35<x<205 and 25<y<215 else (255,249,253,255))
+          def chunk(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          Path('heart-sounds-v1.2/app/src/main/res/drawable/university_logo.png').write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(bytes(raw),9))+chunk(b'IEND',b''))
+          PY
+          fi
+          RAW="heart-sounds-v1.2/app/src/main/res/raw"
+          R="https://teachingheartauscultation.com/heart-sounds-mp3-downloads"
+          A="Mozilla/5.0 (Linux; Android 15) Chrome/151"
+          dl(){ curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 --max-time 240 -A "$A" -e "$R" "https://teachingheartauscultation.com/download/$1/?tmstv=$(date +%s%N)" -o "$RAW/$2.mp3"; test -s "$RAW/$2.mp3"; }
+          dl 1716 adult_case_1_normal
+          dl 1719 adult_case_2_innocent
+          dl 1721 adult_case_3_mitral_stenosis
+          dl 1723 adult_case_3a_mitral_stenosis
+          dl 1726 adult_case_3b_mitral_stenosis
+          dl 1728 adult_case_3c_mitral_stenosis
+          dl 1731 adult_case_3d_mitral_stenosis
+          dl 1734 adult_case_4_bicuspid_aortic_stenosis_insufficiency
+          dl 1738 adult_case_4a_bicuspid_aortic_stenosis_insufficiency
+          dl 1743 adult_case_4b_bicuspid_aortic_stenosis_insufficiency
+          dl 1748 adult_case_4c_bicuspid_aortic_stenosis_insufficiency
+          dl 1751 adult_case_5_vsd
+          dl 1754 adult_case_6_mitral_insufficiency_mvp
+          dl 1756 adult_case_6a_mitral_insufficiency_mvp
+          dl 1759 adult_case_7_pda
+          dl 1109 child_case_1_asd
+          dl 1110 child_case_2_pulmonary_stenosis
+          dl 1111 child_case_3_pda
+          dl 1112 child_case_4_aortic_stenosis_regurgitation
+          dl 1113 child_case_5_normal
+          dl 1114 child_case_6_bicuspid_aortic_valve
+          dl 1115 child_case_7_asd
+          dl 1116 child_case_8_innocent_s3
+          dl 1117 child_case_9_vsd
+          test "$(find "$RAW" -name '*.mp3' | wc -l)" -eq 24
+          python3 - <<'PY'
+          import math,struct,wave
+          p='heart-sounds-v1.2/app/src/main/res/raw/test_output.wav'; sr=44100; pcm=[]
+          for i in range(int(sr*5.2)):
+              t=i/sr; y=0.0
+              for a,b,f in [(0.35,1.05,660),(1.35,2.05,880),(2.35,3.05,660),(3.35,4.35,880)]:
+                  if a<=t<=b:
+                      x=(t-a)/(b-a); e=max(0,min(1,x/.05,(1-x)/.05)); y=.72*e*math.sin(2*math.pi*f*t); break
+              pcm.append(int(y*32767))
+          with wave.open(p,'wb') as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes(struct.pack('<'+'h'*len(pcm),*pcm))
+          PY
+
+      - name: Build and validate APK
+        working-directory: heart-sounds-v1.2
+        run: |
+          gradle --no-daemon clean assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk Asfendiyarov_Heart_Sounds_v1.2.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose Asfendiyarov_Heart_Sounds_v1.2.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 Asfendiyarov_Heart_Sounds_v1.2.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging Asfendiyarov_Heart_Sounds_v1.2.apk | tee apk-badging.txt
+          grep -q "versionName='1.2.0'" apk-badging.txt
+          test "$(unzip -l Asfendiyarov_Heart_Sounds_v1.2.apk | grep -c 'res/raw/.*\.mp3')" -eq 24
+          sha256sum Asfendiyarov_Heart_Sounds_v1.2.apk > Asfendiyarov_Heart_Sounds_v1.2.sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Asfendiyarov-Heart-Sounds-v1.2-Installer-Fast
+          path: |
+            heart-sounds-v1.2/Asfendiyarov_Heart_Sounds_v1.2.apk
+            heart-sounds-v1.2/Asfendiyarov_Heart_Sounds_v1.2.sha256.txt
+            heart-sounds-v1.2/apk-badging.txt
+          if-no-files-found: error
+          retention-days: 14
