@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
     paths:
       - ".github/workflows/run-heart-sounds-build.yml"
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -54,7 +56,16 @@ jobs:
           PY
           python3 /tmp/run_recipe.py
 
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asfendiyarov-Heart-Sounds-Installer
+          path: Asfendiyarov_Heart_Sounds_v1.0.apk
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Publish installer as text payload
+        if: github.event_name == 'push'
         run: |
           mkdir -p generated
           base64 -w0 Asfendiyarov_Heart_Sounds_v1.0.apk > generated/Asfendiyarov_Heart_Sounds_v1.0.apk.b64
