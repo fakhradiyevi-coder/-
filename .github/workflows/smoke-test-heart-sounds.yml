@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   smoke-test:
-    runs-on: macos-15
+    runs-on: macos-13
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
         run: |
           git fetch origin ahs-apk-build:refs/remotes/origin/ahs-apk-build
           git show origin/ahs-apk-build:.github/workflows/build-heart-sounds-apk.yml > /tmp/heart-build.yml
-          python3 -m pip install --quiet pyyaml
+          python3 -m pip install --quiet --break-system-packages pyyaml
           cat > /tmp/run_recipe.py <<'PY'
           import os, subprocess, yaml
           with open('/tmp/heart-build.yml', 'r', encoding='utf-8') as f:
