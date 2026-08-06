@@ -1,0 +1,110 @@
+name: Smoke Test Heart Sounds APK Ubuntu
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore exact APK
+        run: |
+          base64 -d generated/Asfendiyarov_Heart_Sounds_v1.0.apk.b64 > Asfendiyarov_Heart_Sounds_v1.0.apk
+          sha256sum Asfendiyarov_Heart_Sounds_v1.0.apk
+          test "$(sha256sum Asfendiyarov_Heart_Sounds_v1.0.apk | cut -d' ' -f1)" = "3512044777b11c386a360c0e5d13f8948791470b1a8f6604196dccdec17ad3f5"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Create test script
+        run: |
+          mkdir -p evidence
+          cat > /tmp/ui_smoke.py <<'PY'
+          import os, re, subprocess, time, xml.etree.ElementTree as ET
+          PKG='kz.edu.kaznmu.heartsounds'
+          ACT=PKG+'/.MainActivity'
+          os.makedirs('evidence',exist_ok=True)
+          def run(*a,check=True):
+              return subprocess.run(a,text=True,capture_output=True,check=check).stdout
+          def adb(*a,check=True): return run('adb',*a,check=check)
+          def shot(name):
+              with open('evidence/'+name,'wb') as f: subprocess.run(['adb','exec-out','screencap','-p'],stdout=f,check=True)
+          def dump(name):
+              adb('shell','uiautomator','dump','/sdcard/window.xml')
+              adb('pull','/sdcard/window.xml','evidence/'+name)
+              return ET.parse('evidence/'+name).getroot()
+          def find(root,text):
+              for n in root.iter('node'):
+                  if n.attrib.get('text','')==text:return n
+          def tap(node):
+              m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib['bounds']);x1,y1,x2,y2=map(int,m.groups())
+              adb('shell','input','tap',str((x1+x2)//2),str((y1+y2)//2));time.sleep(1)
+          def texts(root):return [n.attrib.get('text','') for n in root.iter('node')]
+          def seek(text,direction='up'):
+              for i in range(10):
+                  r=dump(f'seek_{direction}_{i}.xml');n=find(r,text)
+                  if n is not None:return n
+                  if direction=='up':adb('shell','input','swipe','540','1700','540','450','300')
+                  else:adb('shell','input','swipe','540','450','540','1700','300')
+                  time.sleep(.5)
+              return None
+          adb('logcat','-c')
+          assert 'Success' in adb('install','-r','Asfendiyarov_Heart_Sounds_v1.0.apk')
+          start=adb('shell','am','start','-W','-n',ACT);assert 'Status: ok' in start,start
+          time.sleep(2)
+          r=dump('01_home.xml');t=texts(r)
+          assert any('Тренажёр аускультации сердца' in x for x in t),t
+          assert any('Bluetooth-колонка не обнаружена' in x for x in t),t
+          shot('01_home.png')
+          b=find(r,'Открыть настройки Bluetooth');assert b is not None;tap(b)
+          assert 'com.android.settings' in adb('shell','dumpsys','activity','activities')
+          shot('02_bluetooth_settings.png');adb('shell','input','keyevent','4');time.sleep(1)
+          p=seek('▶  Воспроизвести с повтором','up');assert p is not None;tap(p)
+          r=dump('03_playing.xml');t=texts(r)
+          assert any('Сейчас звучит: Нормальные тоны сердца' in x for x in t),t
+          assert any('Сейчас воспроизводится' in x for x in t),t
+          shot('03_playing.png')
+          p=seek('Пауза / продолжить','down');assert p is not None;tap(p)
+          r=dump('04_paused.xml');t=texts(r);assert any('Пауза: Нормальные тоны сердца' in x for x in t),t
+          shot('04_paused.png')
+          p=find(r,'Пауза / продолжить');assert p is not None;tap(p)
+          r=dump('05_resumed.xml');assert any('Сейчас звучит: Нормальные тоны сердца' in x for x in texts(r))
+          s=find(r,'Стоп');assert s is not None;tap(s)
+          r=dump('06_stopped.xml');assert any('Воспроизведение остановлено' in x for x in texts(r))
+          shot('06_stopped.png')
+          pkg=adb('shell','dumpsys','package',PKG);open('evidence/package.txt','w').write(pkg)
+          assert 'versionName=1.0.0' in pkg
+          logs=adb('logcat','-d');open('evidence/logcat.txt','w').write(logs)
+          assert 'FATAL EXCEPTION' not in logs
+          print('ALL_SMOKE_TESTS_PASSED')
+          PY
+
+      - name: Run exact APK in Android 15 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: python3 /tmp/ui_smoke.py
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Heart-Sounds-APK-Smoke-Test
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 7
