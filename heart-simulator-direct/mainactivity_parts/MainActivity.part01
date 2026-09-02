@@ -1,0 +1,220 @@
+        Button adv=smallButton("Расширенный Gain",Color.rgb(236,230,240),INK); prof.addView(adv,new LinearLayout.LayoutParams(-1,dp(46))); gainPanel=new LinearLayout(this); gainPanel.setOrientation(LinearLayout.VERTICAL); gainPanel.setVisibility(View.GONE); gainSwitch=new Switch(this); gainSwitch.setText("Включить Gain (зависит от клона)"); gainPanel.addView(gainSwitch); gainValue=text("15 / 31",16,Typeface.BOLD,PURPLE); gainPanel.addView(gainValue); gainSeek=new SeekBar(this); gainSeek.setMax(31); gainSeek.setProgress(15); gainPanel.addView(gainSeek); Button apply=smallButton("Применить Gain",PURPLE,Color.WHITE); gainPanel.addView(apply,new LinearLayout.LayoutParams(-1,dp(46))); gainSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar s,int p,boolean f){gainValue.setText(p+" / 31");}
+            public void onStartTrackingTouch(SeekBar s){gainUserAdjusting=true;}
+            public void onStopTrackingTouch(SeekBar s){gainUserAdjusting=false;}
+        }); apply.setOnClickListener(v->command("/api/gain?enabled="+(gainSwitch.isChecked()?1:0)+"&g="+gainSeek.getProgress(),null)); adv.setOnClickListener(v->gainPanel.setVisibility(gainPanel.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE)); prof.addView(gainPanel); col.addView(prof,marginLP());
+        return outer;
+    }
+
+    private void buildEqButtons(){ eqGrid.removeAllViews(); String[] names={"Нормальный","Поп","Рок","Джаз","Классика","Бас"}; for(int r=0;r<2;r++){LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); for(int c=0;c<3;c++){int i=r*3+c; Button b=smallButton(names[i],Color.rgb(239,235,243),INK); b.setTag(i); b.setOnClickListener(v->{selectedEq=(Integer)v.getTag(); updateEqStyles(); command("/api/eq?eq="+selectedEq,null);}); row.addView(b,new LinearLayout.LayoutParams(0,dp(48),1)); if(c<2)row.addView(space(dp(6),1));} LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2); rp.topMargin=dp(8); eqGrid.addView(row,rp);} updateEqStyles(); }
+    private void updateEqStyles(){ for(int r=0;r<eqGrid.getChildCount();r++){LinearLayout row=(LinearLayout)eqGrid.getChildAt(r); for(int c=0;c<row.getChildCount();c++){View v=row.getChildAt(c); if(v instanceof Button && v.getTag() instanceof Integer){int i=(Integer)v.getTag(); setBg(v,i==selectedEq?PURPLE:Color.rgb(239,235,243),12,0,0); ((Button)v).setTextColor(i==selectedEq?Color.WHITE:INK);}}} }
+
+    private LinearLayout buildService(){
+        LinearLayout outer=new LinearLayout(this); ScrollView sv=new ScrollView(this); LinearLayout col=new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(12),dp(8),dp(12),dp(18)); sv.addView(col); outer.addView(sv,new LinearLayout.LayoutParams(-1,-1));
+        LinearLayout ds=card(); ds.addView(text("Состояние устройства",18,Typeface.BOLD,INK)); serviceSummary=text("Нет связи",14,Typeface.NORMAL,MUTED); serviceWarning=text("",12,Typeface.BOLD,RED); ds.addView(serviceSummary); ds.addView(serviceWarning); ds.addView(twoButtons("Диагностика 5 MP3","/api/diag_all",PURPLE,"Переинициализировать MP3","/api/init_players",Color.rgb(239,235,243),INK)); Button wifi=smallButton("Открыть Wi‑Fi настройки Android",GOLD,INK); wifi.setOnClickListener(v->startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS))); ds.addView(wifi,new LinearLayout.LayoutParams(-1,dp(48))); col.addView(ds,marginLP());
+        LinearLayout ch=card(); ch.addView(text("Каналы",18,Typeface.BOLD,INK)); moduleList=new LinearLayout(this); moduleList.setOrientation(LinearLayout.VERTICAL); ch.addView(moduleList); col.addView(ch,marginLP());
+        LinearLayout ioCard=card();
+        ioCard.addView(text("Резервные копии и журнал",18,Typeface.BOLD,INK));
+        Button export=smallButton("Сохранить calibration JSON",PURPLE,Color.WHITE);
+        Button exportCsv=smallButton("Сохранить calibration CSV",Color.rgb(239,235,243),INK);
+        Button log=smallButton("Сохранить журнал CSV",Color.rgb(239,235,243),INK);
+        Button imp=smallButton("Импортировать calibration JSON",GOLD,INK);
+        restoreBackupBtn=smallButton("Восстановить backup до импорта",Color.rgb(239,235,243),INK);
+        Button factory=smallButton("Заводской сброс калибровки",RED,Color.WHITE);
+        for(Button b:new Button[]{export,exportCsv,log,imp,restoreBackupBtn,factory}){
+            ioCard.addView(b,new LinearLayout.LayoutParams(-1,dp(48)));
+            ioCard.addView(space(1,dp(6)));
+        }
+        export.setOnClickListener(v->startExport(EXPORT_JSON,"application/json","HeartCalibration.json","/api/cal/export"));
+        exportCsv.setOnClickListener(v->startExport(EXPORT_CAL_CSV,"text/csv","HeartCalibration.csv","/api/cal/export.csv"));
+        log.setOnClickListener(v->startExport(EXPORT_LOG_CSV,"text/csv","HeartSimulator_SessionLog.csv","/api/log.csv"));
+        imp.setOnClickListener(v->openImport());
+        restoreBackupBtn.setOnClickListener(v->command("/api/cal/restore_backup",null));
+        factory.setOnClickListener(v->confirmFactoryReset());
+        col.addView(ioCard,marginLP());
+        LinearLayout ev=card(); ev.addView(text("Последнее событие",18,Typeface.BOLD,INK)); eventText=text("—",12,Typeface.NORMAL,MUTED); ev.addView(eventText); col.addView(ev,marginLP());
+        return outer;
+    }
+
+    private LinearLayout buildNav(){ LinearLayout n=new LinearLayout(this); n.setGravity(Gravity.CENTER); n.setPadding(dp(8),dp(6),dp(8),dp(6)); n.setBackgroundColor(Color.WHITE); String[] names={"Работа","Калибровка","Сервис"}; for(int i=0;i<3;i++){final int idx=i; Button b=new Button(this); b.setAllCaps(false); b.setText(names[i]); b.setTextSize(14); b.setTypeface(Typeface.DEFAULT,Typeface.BOLD); b.setOnClickListener(v->showScreen(idx)); b.setTag(i); n.addView(b,new LinearLayout.LayoutParams(0,-1,1));} return n; }
+    private void showScreen(int idx){ if(workScreen!=null)workScreen.setVisibility(idx==0?View.VISIBLE:View.GONE); if(calScreen!=null)calScreen.setVisibility(idx==1?View.VISIBLE:View.GONE); if(serviceScreen!=null)serviceScreen.setVisibility(idx==2?View.VISIBLE:View.GONE); if(navBar!=null) for(int i=0;i<navBar.getChildCount();i++){Button b=(Button)navBar.getChildAt(i); boolean on=((Integer)b.getTag())==idx; setBg(b,on?PURPLE:Color.WHITE,12,0,0);b.setTextColor(on?Color.WHITE:MUTED);} }
+
+    private void startPolling(){
+        ui.post(new Runnable(){
+            @Override public void run(){
+                if(!running)return;
+                if(pendingCommands.get()==0) poll();
+                ui.postDelayed(this,400);
+            }
+        });
+    }
+
+    private void poll(){
+        if(pendingCommands.get()>0)return;
+        if(!pollInFlight.compareAndSet(false,true))return;
+        pollIo.execute(()->{
+            long t=SystemClock.elapsedRealtime();
+            try{
+                JSONObject o=ApiClient.getJson("/api/status");
+                DeviceState s=DeviceState.from(o);
+                long lat=SystemClock.elapsedRealtime()-t;
+                failedPolls=0;
+                lastLatency=lat;
+                runOnUiThread(()->applyState(s));
+            }catch(Exception e){
+                failedPolls++;
+                if(failedPolls>=2)runOnUiThread(this::setDisconnected);
+            }finally{
+                pollInFlight.set(false);
+            }
+        });
+    }
+
+    private int timeoutFor(String path){
+        if(path.startsWith("/api/init_players")) return 6500;
+        if(path.startsWith("/api/factory_reset")) return 3500;
+        if(path.startsWith("/api/cal/restore_backup")) return 3500;
+        return 1800;
+    }
+
+    private void command(String path,String optimistic){
+        if(!connected && !path.equals("/api/ping")){
+            Toast.makeText(this,"Нет связи с ESP32. Подключитесь к Wi‑Fi Heart-Simulator.",Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        // Prevent accidental double-taps. STOP remains allowed and is queued with
+        // highest practical priority on the dedicated control executor.
+        if(commandInFlight.get() && !path.startsWith("/api/stop")){
+            Toast.makeText(this,"Предыдущая команда ещё выполняется.",Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        pendingCommands.incrementAndGet();
+        commandInFlight.set(true);
+
+        if(optimistic!=null){
+            state.playbackState=optimistic;
+            updateTopState();
+        }
+        updateControlStates();
+        setPathButtonsEnabled(false);
+
+        try { getWindow().getDecorView().performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); }
+        catch(Exception ignored){}
+
+        controlIo.execute(()->{
+            try{
+                String msg=ApiClient.get(path,timeoutFor(path));
+                JSONObject o=ApiClient.getJson("/api/status");
+                DeviceState s=DeviceState.from(o);
+                runOnUiThread(()->{
+                    Toast.makeText(this,msg,Toast.LENGTH_SHORT).show();
+                    applyState(s);
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    Toast.makeText(this,"Ошибка связи: "+e.getMessage(),Toast.LENGTH_LONG).show();
+                    setDisconnected();
+                });
+            }finally{
+                int left=pendingCommands.decrementAndGet();
+                commandInFlight.set(left>0);
+                runOnUiThread(()->{
+                    updateControlStates();
+                    setPathButtonsEnabled(connected && pendingCommands.get()==0);
+                });
+            }
+        });
+    }
+
+    private void setPathButtonsEnabled(boolean enabled){
+        for(Button b:pathologyButtons.values()) b.setEnabled(enabled);
+        if(randomBtn!=null) randomBtn.setEnabled(enabled);
+    }
+
+    private void updateControlStates(){
+        boolean stopped=state.isStopped();
+        boolean stopping="STOPPING".equals(state.playbackState);
+        boolean transientState=state.isTransient();
+        boolean busy=commandInFlight.get() || pendingCommands.get()>0;
+        if("PAUSING".equals(state.playbackState)) pauseResumeBtn.setText("ПАУЗА…");
+        else if(state.isPaused()) pauseResumeBtn.setText("ПРОДОЛЖИТЬ");
+        else pauseResumeBtn.setText("ПАУЗА");
+        pauseResumeBtn.setEnabled(connected && !busy && !stopped && !transientState);
+        // STOP remains enabled during normal playback; while a command is already
+        // being transmitted it is disabled to avoid creating contradictory queues.
+        stopBtn.setEnabled(connected && !busy && !stopped && !stopping);
+        restartBtn.setEnabled(connected && !busy && !stopped && !transientState);
+        setPathButtonsEnabled(connected && !busy);
+    }
+
+    private void applyState(DeviceState s){
+        state=s;
+        connected=true;
+        connectionPill.setText("ESP32 ✓ · "+lastLatency+" ms");
+        setBg(connectionPill,GREEN,999,0,0);
+        mapView.setState(s);
+        updateTopState();
+
+        String verify=s.controlVerifyActive?" · проверка команды…":
+                (s.controlVerificationComplete?" · команда "+s.controlVerifiedCount+"/5":"");
+        healthText.setText("Каналы: UART "+s.feedbackCount+"/5  ·  SD "+s.sdCount+"/5  ·  файл "+s.trackConfirmedCount+"/5"+verify+(s.diagActive?" · диагностика…":""));
+
+        for(Map.Entry<Integer,Button> e:pathologyButtons.entrySet()){
+            boolean active=e.getKey()==s.track && s.track>0;
+            setPathButtonStyle(e.getValue(),active,s.isPaused());
+        }
+        updateControlStates();
+
+        if(!volumeUserAdjusting){
+            volumeSeek.setProgress(s.volume);
+            volumeValue.setText(s.volume+" / 30");
+        }
+        selectedEq=s.eq;
+        updateEqStyles();
+
+        if(!gainUserAdjusting){
+            gainSeek.setProgress(s.gain);
+            gainValue.setText(s.gain+" / 31");
+        }
+        gainSwitch.setChecked(s.gainEnabled);
+
+        calTrack.setText(s.track>0?(String.format(Locale.ROOT,"%04d.mp3 · ",s.track)+(examMode?"Сценарий "+String.format(Locale.ROOT,"%02d",s.track):s.trackName)):"Сначала выберите патологию");
+        String cs=s.track<=0?"":(s.dirty?"НЕ СОХРАНЕНО":(s.profileSaved?"Профиль сохранён":"Используется базовая калибровка"));
+        calStatus.setText(cs);
+        calStatus.setTextColor(s.dirty?AMBER:GREEN);
+        calStatusTop.setText(cs);
+        calStatusTop.setTextColor(s.dirty?AMBER:GREEN);
+
+        serviceSummary.setText(
+            "Прошивка: "+s.firmware+
+            "\nВремя работы: "+formatUptime(s.uptimeMs)+
+            "\nПрофили: "+s.savedProfiles+" / 20"+
+            "\nUART: "+s.feedbackCount+" / 5 · SD: "+s.sdCount+" / 5"+
+            "\nКонтроль команды: "+s.controlVerifiedCount+" / 5"+
+            "\nChecksum: "+s.checksum
+        );
+        serviceWarning.setText(s.lastWarning==null?"":s.lastWarning);
+        eventText.setText(s.lastEvent);
+        if(restoreBackupBtn!=null) restoreBackupBtn.setEnabled(s.backupAvailable);
+        rebuildModules(s);
+    }
+
+    private void updateTopState(){
+        String st=state.playbackState;
+        int color=Color.rgb(238,234,241);
+        String title,sub;
+        String confirm=state.controlVerifyActive?" · проверка 5 модулей…":
+                (state.controlVerificationComplete?" · подтверждено "+state.controlVerifiedCount+"/5":"");
+
+        if("STOPPING".equals(st)){
+            title="■ ОСТАНОВКА…";
+            sub="Команда STOP отправлена всем 5 MP3"+confirm;
+            color=Color.rgb(255,235,235);
+        }else if(state.track<=0||"STOPPED".equals(st)){
+            title="■ STOP";
+            sub="Воспроизведение остановлено"+confirm;
+            color=Color.rgb(242,237,242);
+        }else if("PAUSED".equals(st)||"PAUSING".equals(st)){
+            title="Ⅱ ПАУЗА";
