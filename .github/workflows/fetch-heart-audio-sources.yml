@@ -20,7 +20,7 @@ jobs:
       - name: Fetch sources
         run: |
           set -euxo pipefail
-          mkdir -p sources/BMD
+          mkdir -p sources/BMD sources/META
           curl -L --fail --retry 3 -o sources/wellcome_heart_sounds.mp3 'https://archive.org/download/0056-0000-8039-0000-0-0000-0000-0/0056-0000-8039-0000-0-0000-0000-0.mp3'
           curl -L --fail --retry 3 -o sources/commons_PS_S7.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S7.ogg'
           curl -L --fail --retry 3 -o sources/commons_VSD_S9.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S9.ogg'
@@ -38,6 +38,10 @@ jobs:
           curl -L --fail --retry 3 -o sources/BMD/README.md 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/README.md'
           curl -L --fail --retry 3 -o sources/BMD/train.csv 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/train.csv'
           curl -L --fail --retry 3 -o sources/BMD/LICENSE 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/LICENSE'
+          curl -L --fail --retry 3 -o sources/META/PMC6283745_oa.xml 'https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC6283745' || true
+          curl -L --fail --retry 3 -o sources/META/PMC6761354_oa.xml 'https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC6761354' || true
+          curl -L --fail --retry 3 -o sources/META/PMC10398423_oa.xml 'https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC10398423' || true
+          curl -L --fail --retry 3 -o sources/META/mendeley_files.json 'https://data.mendeley.com/public-api/datasets/jfbdvjw6sf/versions/1/files' || true
           ffprobe -hide_banner sources/wellcome_heart_sounds.mp3 2> sources/wellcome_ffprobe.txt || true
           find sources -type f -print0 | sort -z | xargs -0 sha256sum > sources/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
