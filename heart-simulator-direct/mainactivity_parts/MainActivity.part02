@@ -1,0 +1,126 @@
+            sub=(examMode?String.format(Locale.ROOT,"Сценарий %02d",state.track):state.trackName)+" · "+String.format(Locale.ROOT,"%04d.mp3",state.track)+confirm;
+            color=Color.rgb(255,246,219);
+        }else{
+            title="▶ ИГРАЕТ ПО КРУГУ";
+            sub=(examMode?String.format(Locale.ROOT,"Сценарий %02d",state.track):state.trackName)+" · "+String.format(Locale.ROOT,"%04d.mp3",state.track)+confirm;
+            color=Color.rgb(233,248,238);
+        }
+        stateTitle.setText(title);
+        stateSub.setText(sub);
+        View parent=(View)stateTitle.getParent();
+        if(parent!=null)setBg(parent,color,18,0,0);
+    }
+    private void setDisconnected(){
+        connected=false;
+        connectionPill.setText("Нет связи");
+        setBg(connectionPill,RED,999,0,0);
+        healthText.setText("Подключитесь к Wi‑Fi Heart-Simulator");
+        if(stateTitle!=null) stateTitle.setText("НЕТ СВЯЗИ");
+        if(stateSub!=null) stateSub.setText("Откройте Wi‑Fi и выберите Heart-Simulator");
+        if(pauseResumeBtn!=null)pauseResumeBtn.setEnabled(false);
+        if(stopBtn!=null)stopBtn.setEnabled(false);
+        if(restartBtn!=null)restartBtn.setEnabled(false);
+    }
+
+    private void rebuildModules(DeviceState s){ moduleList.removeAllViews(); String[] names={"Аортальная","Лёгочная","Точка Эрба","Трикуспидальная","Митральная"}; int[] pins={5,6,7,10,11}; for(int i=0;i<5;i++){ModuleState m=i<s.modules.size()?s.modules.get(i):null; LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(12),dp(10),dp(12),dp(10));int bg=Color.rgb(246,244,248);String status="Не проверено";if(m!=null){if(m.trackMatch){bg=Color.rgb(235,248,239);status="✓ Трек подтверждён";}else if(m.feedbackOk){bg=Color.rgb(255,247,222);status="✓ UART есть · файл не подтверждён";}else if(m.checked){bg=Color.rgb(237,243,253);status="○ PLAY/команда возможны · TX не подтверждён";}}setBg(card,bg,14,1,LINE);card.addView(text("MP3 №"+(i+1)+" · "+names[i],14,Typeface.BOLD,INK));card.addView(text(status+"  ·  TX→GPIO"+pins[i],12,Typeface.NORMAL,MUTED));
+            if(m!=null && m.stateQueryOk)card.addView(text("Состояние плеера: "+m.playerState+" ("+m.playerStateRaw+")"+(m.stateMatch?" ✓":""),11,Typeface.BOLD,MUTED));
+            if(m!=null&&!m.message.isEmpty())card.addView(text(m.message,11,Typeface.NORMAL,MUTED));Button b=smallButton("Проверить канал",PURPLE,Color.WHITE);final int n=i+1;b.setOnClickListener(v->command("/api/diag_one?module="+n,null));card.addView(b,new LinearLayout.LayoutParams(-1,dp(42)));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(8);moduleList.addView(card,lp);} }
+
+    private void startExport(int requestCode,String mime,String fileName,String path){
+        pendingExportPath=path;
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType(mime);
+        i.putExtra(Intent.EXTRA_TITLE,fileName);
+        startActivityForResult(i,requestCode);
+    }
+
+    private void openImport(){
+        Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/json");
+        startActivityForResult(i,IMPORT_JSON);
+    }
+
+    private boolean isExportRequest(int code){
+        return code==EXPORT_JSON||code==EXPORT_CAL_CSV||code==EXPORT_LOG_CSV;
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(resultCode!=RESULT_OK||data==null||data.getData()==null)return;
+        Uri uri=data.getData();
+
+        if(requestCode==IMPORT_JSON){
+            controlIo.execute(()->{
+                try{
+                    String body=readUri(uri);
+                    String response=ApiClient.postJson("/api/cal/import",body);
+                    JSONObject o=ApiClient.getJson("/api/status");
+                    DeviceState s=DeviceState.from(o);
+                    runOnUiThread(()->{
+                        Toast.makeText(this,response,Toast.LENGTH_LONG).show();
+                        applyState(s);
+                    });
+                }catch(Exception e){
+                    runOnUiThread(()->Toast.makeText(this,"Импорт не выполнен: "+e.getMessage(),Toast.LENGTH_LONG).show());
+                }
+            });
+            return;
+        }
+
+        if(isExportRequest(requestCode)){
+            final String path=pendingExportPath;
+            pendingExportPath=null;
+            if(path==null)return;
+            fileIo.execute(()->{
+                try{
+                    String body=ApiClient.get(path,3500);
+                    try(OutputStream os=getContentResolver().openOutputStream(uri)){
+                        if(os==null)throw new IOException("Не удалось открыть файл для записи");
+                        os.write(body.getBytes(StandardCharsets.UTF_8));
+                    }
+                    runOnUiThread(()->Toast.makeText(this,"Файл сохранён",Toast.LENGTH_SHORT).show());
+                }catch(Exception e){
+                    runOnUiThread(()->Toast.makeText(this,"Не удалось сохранить: "+e.getMessage(),Toast.LENGTH_LONG).show());
+                }
+            });
+        }
+    }
+
+    private void confirmFactoryReset(){
+        new AlertDialog.Builder(this)
+            .setTitle("Заводской сброс калибровки")
+            .setMessage("Будут удалены все 20 сохранённых профилей, базовая калибровка и backup. Аудио и прошивка останутся.")
+            .setNegativeButton("Отмена",null)
+            .setPositiveButton("Продолжить",(d,w)->
+                new AlertDialog.Builder(this)
+                    .setTitle("Подтвердите ещё раз")
+                    .setMessage("Сбросить калибровку без возможности отмены?")
+                    .setNegativeButton("Нет",null)
+                    .setPositiveButton("СБРОСИТЬ",(d2,w2)->command("/api/factory_reset?confirm=ERASE",null))
+                    .show()
+            ).show();
+    }
+
+    private String readUri(Uri uri)throws Exception{
+        StringBuilder sb=new StringBuilder();
+        try(BufferedReader br=new BufferedReader(new InputStreamReader(getContentResolver().openInputStream(uri),StandardCharsets.UTF_8))){
+            String l;
+            while((l=br.readLine())!=null)sb.append(l).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private LinearLayout twoButtons(String a,String pa,int ca,String b,String pb,int cb,int tb){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);Button x=smallButton(a,ca,ca==PURPLE?Color.WHITE:INK);Button y=smallButton(b,cb,tb);x.setOnClickListener(v->command(pa,null));y.setOnClickListener(v->command(pb,null));row.addView(x,new LinearLayout.LayoutParams(0,dp(50),1));row.addView(space(dp(8),1));row.addView(y,new LinearLayout.LayoutParams(0,dp(50),1));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(8);row.setLayoutParams(lp);return row;}
+    private void setPathButtonStyle(Button b,boolean active,boolean paused){int bg=active?(paused?Color.rgb(255,245,214):Color.rgb(233,248,238)):Color.rgb(242,238,244);int stroke=active?(paused?AMBER:GREEN):LINE;setBg(b,bg,12,1,stroke);b.setTextColor(INK);b.setTypeface(Typeface.DEFAULT,active?Typeface.BOLD:Typeface.NORMAL);}
+    private LinearLayout card(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setPadding(dp(16),dp(14),dp(16),dp(14));setBg(l,CARD,18,1,LINE);return l;}
+    private TextView text(String s,int sp,int style,int color){TextView t=new TextView(this);t.setText(s);t.setTextSize(sp);t.setTextColor(color);t.setTypeface(Typeface.DEFAULT,style);t.setLineSpacing(0,1.08f);return t;}
+    private Button bigButton(String s,int bg,int fg){Button b=new Button(this);b.setAllCaps(false);b.setText(s);b.setTextSize(17);b.setTextColor(fg);b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);setBg(b,bg,16,0,0);return b;}
+    private Button smallButton(String s,int bg,int fg){Button b=new Button(this);b.setAllCaps(false);b.setText(s);b.setTextSize(13);b.setTextColor(fg);b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);setBg(b,bg,12,0,0);return b;}
+    private View space(int w,int h){View v=new View(this);v.setLayoutParams(new LinearLayout.LayoutParams(w,h));return v;}
+    private LinearLayout.LayoutParams marginLP(){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(8);return lp;}
+    private void setBg(View v,int color,float radius,int stroke,int strokeColor){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(radius));if(stroke>0)g.setStroke(dp(stroke),strokeColor);v.setBackground(g);}
+    private int dp(float v){return Math.round(v*getResources().getDisplayMetrics().density);}
+    private String formatUptime(long ms){long sec=ms/1000;long h=sec/3600,m=(sec%3600)/60,s=sec%60;return String.format(Locale.ROOT,"%02d:%02d:%02d",h,m,s);}
+}
