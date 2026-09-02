@@ -1,72 +1,13 @@
 name: Build Heart Simulator Control 4.0 APK
 
 on:
-  push:
-    branches:
-      - heart-simulator-control-v4-build
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-apk:
+  hold:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
-
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Expand audited Android project
-        run: |
-          set -euo pipefail
-          rm -rf build-heart-simulator
-          mkdir build-heart-simulator
-          base64 --decode heart-simulator-control-v4/heart_sim_android_project.b64 > /tmp/heart-simulator-project.zip
-          echo 'eb2ea140df8dfbb593c1a0c5e37924a70952b4daa6d64a48e7c0da823e77bce0  /tmp/heart-simulator-project.zip' | sha256sum -c -
-          unzip -t /tmp/heart-simulator-project.zip
-          unzip -q /tmp/heart-simulator-project.zip -d build-heart-simulator
-          test -f build-heart-simulator/ANDROID_APP/app/build.gradle
-
-      - name: Lint and build installable APK
-        working-directory: build-heart-simulator/ANDROID_APP
-        run: |
-          set -euo pipefail
-          gradle --no-daemon clean lintDebug assembleDebug
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          cp "$APK" Heart_Auscultation_4.0.0.apk
-          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose Heart_Auscultation_4.0.0.apk
-          "$ANDROID_HOME/build-tools/34.0.0/zipalign" -c -v 4 Heart_Auscultation_4.0.0.apk
-          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging Heart_Auscultation_4.0.0.apk | tee apk-badging.txt
-          grep -q "package: name='kz.asfendiyarov.heartsimulator'" apk-badging.txt
-          grep -q "versionName='4.0.0'" apk-badging.txt
-          grep -q "sdkVersion:'26'" apk-badging.txt
-          sha256sum Heart_Auscultation_4.0.0.apk > Heart_Auscultation_4.0.0.sha256.txt
-
-      - name: Upload APK and QA evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: Heart-Auscultation-4.0.0-APK
-          path: |
-            build-heart-simulator/ANDROID_APP/Heart_Auscultation_4.0.0.apk
-            build-heart-simulator/ANDROID_APP/Heart_Auscultation_4.0.0.sha256.txt
-            build-heart-simulator/ANDROID_APP/apk-badging.txt
-            build-heart-simulator/ANDROID_APP/app/build/reports/lint-results-debug.html
-            build-heart-simulator/ANDROID_APP/app/build/reports/lint-results-debug.txt
-          if-no-files-found: error
-          retention-days: 14
+      - run: echo "Source upload staging"
