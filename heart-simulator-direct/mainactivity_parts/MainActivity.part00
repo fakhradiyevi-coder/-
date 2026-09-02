@@ -1,0 +1,220 @@
+package kz.asfendiyarov.heartsimulator;
+
+import android.app.*;
+import android.os.*;
+import android.provider.Settings;
+import android.content.*;
+import android.graphics.*;
+import android.graphics.drawable.GradientDrawable;
+import android.net.*;
+import android.view.*;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.*;
+import android.text.*;
+import org.json.*;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class MainActivity extends Activity {
+    // Brand palette follows the university's purple/gold identity.
+    private static final int PURPLE=Color.rgb(92,42,115), PURPLE_DARK=Color.rgb(61,24,79), GOLD=Color.rgb(199,164,91);
+    private static final int BG=Color.rgb(246,244,248), CARD=Color.WHITE, INK=Color.rgb(34,27,38), MUTED=Color.rgb(104,91,109);
+    private static final int GREEN=Color.rgb(45,145,78), AMBER=Color.rgb(203,153,35), RED=Color.rgb(190,67,67), BLUE=Color.rgb(71,105,177), LINE=Color.rgb(228,220,232);
+
+    // Control traffic is isolated from status polling and file I/O.
+    // STOP/PAUSE must never sit behind a slow export/import or a timed-out poll.
+    private final ExecutorService controlIo=Executors.newSingleThreadExecutor();
+    private final ExecutorService pollIo=Executors.newSingleThreadExecutor();
+    private final ExecutorService fileIo=Executors.newSingleThreadExecutor();
+    private final Handler ui=new Handler(Looper.getMainLooper());
+    private final AtomicBoolean pollInFlight=new AtomicBoolean(false);
+    private final AtomicBoolean commandInFlight=new AtomicBoolean(false);
+    private final AtomicInteger pendingCommands=new AtomicInteger(0);
+    private volatile boolean running=true;
+    private volatile boolean connected=false;
+    private volatile Network selectedWifiNetwork;
+    private int failedPolls=0;
+    private long lastLatency=0;
+    private ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback wifiCallback;
+
+    private LinearLayout appRoot, content, workScreen, calScreen, serviceScreen, pathContainer, moduleList, navBar;
+    private TextView connectionPill, stateTitle, stateSub, healthText, calStatusTop, calStatus, calTrack, serviceSummary, serviceWarning, eventText;
+    private AuscultationMapView mapView;
+    private Button pauseResumeBtn, stopBtn, restartBtn, teacherBtn, randomBtn, restoreBackupBtn;
+    private SeekBar volumeSeek, gainSeek;
+    private TextView volumeValue, gainValue;
+    private LinearLayout eqGrid, gainPanel;
+    private Switch gainSwitch;
+    private EditText search;
+    private DeviceState state=new DeviceState();
+    private final Map<Integer,Button> pathologyButtons=new HashMap<>();
+    private final Map<Integer,String> pathologyNames=new LinkedHashMap<>();
+    private boolean examMode=false;
+    private boolean volumeUserAdjusting=false;
+    private boolean gainUserAdjusting=false;
+    private String pendingExportPath=null;
+    private int selectedEq=0;
+    private static final int IMPORT_JSON=4411;
+    private static final int EXPORT_JSON=4412;
+    private static final int EXPORT_CAL_CSV=4413;
+    private static final int EXPORT_LOG_CSV=4414;
+
+    private static final int[] TRACKS={1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20};
+    private static final String[] NAMES={
+        "Норма, синусовый ритм","Аортальный стеноз","Аортальная регургитация","Митральный стеноз","Митральная регургитация",
+        "Пролапс митрального клапана","Стеноз клапана лёгочной артерии","Трикуспидальная регургитация","Дефект межжелудочковой перегородки",
+        "Дефект межпредсердной перегородки","Открытый артериальный проток","Гипертрофическая обструктивная кардиомиопатия","Тетрада Фалло",
+        "III тон / желудочковый галоп","IV тон / предсердный галоп","Шум трения перикарда","Фибрилляция предсердий",
+        "Желудочковая экстрасистолия","Выраженная синусовая тахикардия","Полная атриовентрикулярная блокада"
+    };
+
+    @Override public void onCreate(Bundle b){
+        super.onCreate(b);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if(Build.VERSION.SDK_INT>=21){getWindow().setStatusBarColor(PURPLE_DARK);getWindow().setNavigationBarColor(Color.WHITE);}
+        for(int i=0;i<TRACKS.length;i++) pathologyNames.put(TRACKS[i],NAMES[i]);
+        buildUi();
+        bindToWifiTransport();
+        startPolling();
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        if(running) poll();
+    }
+
+    @Override protected void onDestroy(){
+        running=false;
+        ApiClient.setNetwork(null);
+        if(connectivity!=null && wifiCallback!=null){
+            try{connectivity.unregisterNetworkCallback(wifiCallback);}catch(Exception ignored){}
+        }
+        controlIo.shutdownNow();
+        pollIo.shutdownNow();
+        fileIo.shutdownNow();
+        super.onDestroy();
+    }
+
+    private void bindToWifiTransport(){
+        connectivity=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+        if(connectivity==null)return;
+        NetworkRequest req=new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build();
+        wifiCallback=new ConnectivityManager.NetworkCallback(){
+            @Override public void onAvailable(Network network){
+                selectedWifiNetwork=network;
+                ApiClient.setNetwork(network);
+                runOnUiThread(()->{
+                    connectionPill.setText("Wi‑Fi найден · проверка ESP32…");
+                    setBg(connectionPill,AMBER,999,0,0);
+                });
+                poll();
+            }
+            @Override public void onLost(Network network){
+                if(selectedWifiNetwork!=null && selectedWifiNetwork.equals(network)){
+                    selectedWifiNetwork=null;
+                    ApiClient.setNetwork(null);
+                    runOnUiThread(()->setDisconnected());
+                }
+            }
+        };
+        try{connectivity.registerNetworkCallback(req,wifiCallback);}
+        catch(Exception e){ setDisconnected(); }
+    }
+
+    private void buildUi(){
+        appRoot=new LinearLayout(this); appRoot.setOrientation(LinearLayout.VERTICAL); appRoot.setBackgroundColor(BG);
+        setContentView(appRoot);
+        appRoot.addView(buildHeader(), new LinearLayout.LayoutParams(-1,dp(92)));
+        stateTitle=text("STOP",22,Typeface.BOLD,INK); stateSub=text("Подключитесь к Heart-Simulator",13,Typeface.NORMAL,MUTED);
+        LinearLayout stateCard=card(); stateCard.setPadding(dp(18),dp(12),dp(18),dp(12)); stateCard.addView(stateTitle); stateCard.addView(stateSub);
+        appRoot.addView(stateCard,new LinearLayout.LayoutParams(-1,-2));
+        content=new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
+        appRoot.addView(content,new LinearLayout.LayoutParams(-1,0,1));
+        workScreen=buildWork(); calScreen=buildCalibration(); serviceScreen=buildService();
+        content.addView(workScreen,new LinearLayout.LayoutParams(-1,-1));
+        content.addView(calScreen,new LinearLayout.LayoutParams(-1,-1));
+        content.addView(serviceScreen,new LinearLayout.LayoutParams(-1,-1));
+        showScreen(0);
+        navBar=buildNav(); appRoot.addView(navBar,new LinearLayout.LayoutParams(-1,dp(68))); showScreen(0);
+    }
+
+    private View buildHeader(){
+        LinearLayout h=new LinearLayout(this); h.setGravity(Gravity.CENTER_VERTICAL); h.setPadding(dp(16),dp(10),dp(16),dp(10)); h.setBackgroundColor(PURPLE_DARK);
+        BrandMarkView mark=new BrandMarkView(this); h.addView(mark,new LinearLayout.LayoutParams(dp(58),dp(58)));
+        LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL); words.setPadding(dp(12),0,dp(8),0);
+        TextView brand=text("ASFENDIYAROV UNIVERSITY 1930",15,Typeface.BOLD,Color.WHITE); TextView product=text("Heart Auscultation Simulator",12,Typeface.NORMAL,Color.rgb(231,218,235));
+        words.addView(brand); words.addView(product); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+        connectionPill=text("Нет связи",12,Typeface.BOLD,Color.WHITE); connectionPill.setGravity(Gravity.CENTER); connectionPill.setPadding(dp(12),dp(8),dp(12),dp(8)); setBg(connectionPill,RED,999,0,0);
+        connectionPill.setOnClickListener(v->startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
+        h.addView(connectionPill,new LinearLayout.LayoutParams(-2,-2)); return h;
+    }
+
+    private LinearLayout buildWork(){
+        LinearLayout outer=new LinearLayout(this); outer.setOrientation(LinearLayout.VERTICAL);
+        ScrollView sv=new ScrollView(this); LinearLayout col=new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(12),dp(8),dp(12),dp(16)); sv.addView(col); outer.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout wifi=card(); wifi.setOrientation(LinearLayout.HORIZONTAL); wifi.setGravity(Gravity.CENTER_VERTICAL); TextView wi=text("Управление по локальной Wi‑Fi сети ESP32. Телефон должен быть подключён к Heart-Simulator.",13,Typeface.NORMAL,MUTED); wifi.addView(wi,new LinearLayout.LayoutParams(0,-2,1)); Button ws=smallButton("Wi‑Fi настройки",PURPLE,Color.WHITE); ws.setOnClickListener(v->startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS))); wifi.addView(ws); col.addView(wifi,marginLP());
+
+        LinearLayout mapCard=card(); TextView title=text("Пять точек аускультации",18,Typeface.BOLD,INK); mapCard.addView(title); healthText=text("Ожидание связи",12,Typeface.BOLD,MUTED); mapCard.addView(healthText); mapView=new AuscultationMapView(this); mapCard.addView(mapView,new LinearLayout.LayoutParams(-1,dp(360))); col.addView(mapCard,marginLP());
+
+        LinearLayout control=card(); TextView ct=text("Управление",18,Typeface.BOLD,INK); control.addView(ct);
+        LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setPadding(0,dp(10),0,0);
+        pauseResumeBtn=bigButton("ПАУЗА",AMBER,Color.WHITE); stopBtn=bigButton("STOP",RED,Color.WHITE); row.addView(pauseResumeBtn,new LinearLayout.LayoutParams(0,dp(58),1)); LinearLayout.LayoutParams gap=new LinearLayout.LayoutParams(dp(10),1); row.addView(new View(this),gap); row.addView(stopBtn,new LinearLayout.LayoutParams(0,dp(58),1)); control.addView(row);
+        restartBtn=smallButton("Синхронно перезапустить 5 каналов",PURPLE,Color.WHITE); LinearLayout.LayoutParams rlp=new LinearLayout.LayoutParams(-1,dp(48)); rlp.topMargin=dp(10); control.addView(restartBtn,rlp);
+        pauseResumeBtn.setOnClickListener(v->{ if(state.isPaused()) command("/api/resume","STARTING"); else command("/api/pause","PAUSING"); });
+        stopBtn.setOnClickListener(v->command("/api/stop","STOPPING")); restartBtn.setOnClickListener(v->command("/api/restart","STARTING")); col.addView(control,marginLP());
+
+        LinearLayout selector=card(); LinearLayout top=new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL); TextView ptitle=text("Патологии",18,Typeface.BOLD,INK); top.addView(ptitle,new LinearLayout.LayoutParams(0,-2,1)); teacherBtn=smallButton("Режим: преподаватель",PURPLE,Color.WHITE); randomBtn=smallButton("Случайный",GOLD,INK); randomBtn.setVisibility(View.GONE); top.addView(teacherBtn); top.addView(space(dp(8),1)); top.addView(randomBtn); selector.addView(top);
+        teacherBtn.setOnClickListener(v->{
+            examMode=!examMode;
+            teacherBtn.setText(examMode?"Режим: экзамен":"Режим: преподаватель");
+            randomBtn.setVisibility(examMode?View.VISIBLE:View.GONE);
+            search.setVisibility(examMode?View.GONE:View.VISIBLE);
+            if(examMode) search.setText("");
+            rebuildPathLabels();
+            applyState(state);
+        });
+        randomBtn.setOnClickListener(v->{int t=1+new Random().nextInt(20); play(t);});
+        search=new EditText(this); search.setHint("Поиск: митральный, стеноз, 0005..."); search.setTextSize(15); search.setSingleLine(true); search.setPadding(dp(14),dp(10),dp(14),dp(10)); setBg(search,Color.WHITE,14,1,LINE); LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(-1,dp(52)); slp.topMargin=dp(12); selector.addView(search,slp);
+        pathContainer=new LinearLayout(this); pathContainer.setOrientation(LinearLayout.VERTICAL); selector.addView(pathContainer,new LinearLayout.LayoutParams(-1,-2)); buildPathButtons();
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int d){} public void onTextChanged(CharSequence s,int st,int before,int count){filterPaths(s.toString());} public void afterTextChanged(Editable e){}});
+        col.addView(selector,marginLP());
+        return outer;
+    }
+
+    private void buildPathButtons(){
+        pathContainer.removeAllViews(); pathologyButtons.clear();
+        String[][] groups={{"Норма","1"},{"Клапанные пороки","2,3,4,5,6,7,8"},{"Врожденные пороки","9,10,11,13"},{"Кардиомиопатия","12"},{"Дополнительные тоны","14,15"},{"Перикард","16"},{"Нарушения ритма","17,18,19,20"}};
+        boolean tablet=getResources().getConfiguration().smallestScreenWidthDp>=600;
+        for(String[] g:groups){ TextView gh=text(g[0].toUpperCase(Locale.ROOT),12,Typeface.BOLD,MUTED); LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2); hp.topMargin=dp(14); pathContainer.addView(gh,hp); GridLayout grid=new GridLayout(this); grid.setColumnCount(tablet?2:1); String[] ids=g[1].split(","); for(String id:ids){int t=Integer.parseInt(id); Button b=new Button(this); b.setAllCaps(false); b.setGravity(Gravity.START|Gravity.CENTER_VERTICAL); b.setTextSize(14); b.setPadding(dp(14),0,dp(10),0); b.setTag(t); b.setOnClickListener(v->play((Integer)v.getTag())); setPathButtonStyle(b,false,false); pathologyButtons.put(t,b); GridLayout.LayoutParams gp=new GridLayout.LayoutParams(); gp.width=0; gp.height=dp(54); gp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f); gp.setMargins(0,dp(4), tablet?dp(6):0,dp(4)); grid.addView(b,gp);} pathContainer.addView(grid,new LinearLayout.LayoutParams(-1,-2)); }
+        rebuildPathLabels();
+    }
+
+    private void rebuildPathLabels(){ for(Map.Entry<Integer,Button> e:pathologyButtons.entrySet()){int t=e.getKey(); String label=examMode?String.format(Locale.ROOT,"Сценарий %02d",t):String.format(Locale.ROOT,"%02d. %s",t,pathologyNames.get(t)); e.getValue().setText(label);} }
+    private void filterPaths(String q){String s=q.trim().toLowerCase(Locale.ROOT); for(Map.Entry<Integer,Button> e:pathologyButtons.entrySet()){String hay=(String.format(Locale.ROOT,"%04d ",e.getKey())+pathologyNames.get(e.getKey())).toLowerCase(Locale.ROOT); e.getValue().setVisibility(s.isEmpty()||hay.contains(s)?View.VISIBLE:View.GONE);} }
+    private void play(int track){ if(state.dirty){new AlertDialog.Builder(this).setTitle("Несохранённая калибровка").setMessage("Изменения не сохранены. Переключить патологию?").setNegativeButton("Отмена",null).setPositiveButton("Переключить",(d,w)->doPlay(track)).show();}else doPlay(track); }
+    private void doPlay(int track){
+        if(!connected){Toast.makeText(this,"Нет связи с ESP32. Подключитесь к Heart-Simulator.",Toast.LENGTH_LONG).show();return;}
+        state.track=track;
+        state.trackName=pathologyNames.get(track);
+        state.playbackState="STARTING";
+        updateTopState();
+        updateControlStates();
+        command("/api/play?track="+track,"STARTING");
+    }
+
+    private LinearLayout buildCalibration(){
+        LinearLayout outer=new LinearLayout(this); ScrollView sv=new ScrollView(this); LinearLayout col=new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(12),dp(8),dp(12),dp(18)); sv.addView(col); outer.addView(sv,new LinearLayout.LayoutParams(-1,-1));
+        LinearLayout cur=card(); calTrack=text("Сначала выберите патологию",18,Typeface.BOLD,INK); calStatusTop=text("",12,Typeface.BOLD,MUTED); cur.addView(calTrack); cur.addView(calStatusTop); col.addView(cur,marginLP());
+        LinearLayout vol=card(); vol.addView(text("Громкость",18,Typeface.BOLD,INK)); volumeValue=text("15 / 30",22,Typeface.BOLD,PURPLE); vol.addView(volumeValue); volumeSeek=new SeekBar(this); volumeSeek.setMax(30); volumeSeek.setProgress(15); vol.addView(volumeSeek,new LinearLayout.LayoutParams(-1,dp(48))); volumeSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar s,int p,boolean from){volumeValue.setText(p+" / 30");}
+            public void onStartTrackingTouch(SeekBar s){volumeUserAdjusting=true;}
+            public void onStopTrackingTouch(SeekBar s){volumeUserAdjusting=false;command("/api/volume?v="+s.getProgress(),null);}
+        }); col.addView(vol,marginLP());
+        LinearLayout eq=card(); eq.addView(text("Тембр",18,Typeface.BOLD,INK)); eq.addView(text("Реальные EQ-пресеты DFPlayer",12,Typeface.NORMAL,MUTED)); eqGrid=new LinearLayout(this); eqGrid.setOrientation(LinearLayout.VERTICAL); eq.addView(eqGrid); buildEqButtons(); col.addView(eq,marginLP());
+        LinearLayout prof=card(); prof.addView(text("Профиль калибровки",18,Typeface.BOLD,INK)); calStatus=text("",12,Typeface.BOLD,MUTED); prof.addView(calStatus); prof.addView(twoButtons("СОХРАНИТЬ","/api/cal/save",PURPLE,"Вернуть сохранённую","/api/cal/revert",Color.rgb(235,229,239),INK)); prof.addView(twoButtons("К базовой","/api/cal/reset_base",Color.rgb(239,235,243),INK,"Сделать базовой","/api/cal/default_from_current",GOLD,INK));
