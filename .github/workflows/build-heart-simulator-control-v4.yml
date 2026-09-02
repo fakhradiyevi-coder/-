@@ -36,7 +36,8 @@ jobs:
           set -euo pipefail
           rm -rf build-heart-simulator
           mkdir build-heart-simulator
-          base64 -d heart-simulator-control-v4/project.zip > /tmp/heart-simulator-project.zip
+          cat heart-simulator-control-v4/chunks/chunk_*.txt | tr -d '\n\r ' | base64 -d > /tmp/heart-simulator-project.zip
+          echo 'eb2ea140df8dfbb593c1a0c5e37924a70952b4daa6d64a48e7c0da823e77bce0  /tmp/heart-simulator-project.zip' | sha256sum -c -
           unzip -t /tmp/heart-simulator-project.zip
           unzip -q /tmp/heart-simulator-project.zip -d build-heart-simulator
           test -f build-heart-simulator/ANDROID_APP/app/build.gradle
