@@ -1,0 +1,42 @@
+name: Fetch HOCM and S3 Final Audio
+
+on:
+  push:
+    branches: [heart-simulator-control-v4-build]
+    paths:
+      - '.github/workflows/fetch-hocm-s3-final.yml'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact open supplementary media
+        shell: bash
+        run: |
+          set -uxo pipefail
+          mkdir -p fetched/hocm fetched/s3
+
+          HOCM_URL='https://oup.silverchair-cdn.com/oup/backfile/Content_public/Journal/ehjcr/7/3/10.1093_ehjcr_ytad124/1/ytad124_supplementary_data.zip?Expires=2147483647&Key-Pair-Id=APKAIE5G5CRDK6RD3PGA&Signature=OcaNlP5O65kArFmniFHREViHoGwZcmM~XxHIaUW5XHssHzg0X2Nh6COy6tHt5hQvC0v4U-pSOIZXoqCypFvjQIYklTzxGNfSDmnVqGmWe6k1QRy7AucZJovGTvoMPItIEJHF5K4tHVw8dW2Bjx7ZUYRVlwAllqa3Nx85hfJD5FlH5w0V38JOcoKzf0LP5M7TwujkxoAYr4QFI7bZv9imdYWhYKl26u73q54QwaOhbIHLB3dU3HLFVVgn4PqMOmAxb~asq2TVVa0CxxXLsjWz1NQtulyI0~O2VgGQOVw25NodcgB1ZKytY6pnW6giEAWTcTTAv5YziA0irmH9JK0rYA__'
+          curl -fL --retry 3 -A 'Mozilla/5.0' "$HOCM_URL" -o fetched/hocm/ytad124_supplementary_data.zip || true
+          if [ -s fetched/hocm/ytad124_supplementary_data.zip ]; then
+            unzip -q fetched/hocm/ytad124_supplementary_data.zip -d fetched/hocm/extracted || true
+          fi
+
+          for u in \
+            'https://pmc.ncbi.nlm.nih.gov/articles/instance/6761354/bin/1349-7235-58-2535-s001.avi' \
+            'https://www.ncbi.nlm.nih.gov/pmc/articles/instance/6761354/bin/1349-7235-58-2535-s001.avi' \
+            'https://pmc.ncbi.nlm.nih.gov/articles/PMC6761354/bin/1349-7235-58-2535-s001.avi'; do
+            curl -fL --retry 2 -A 'Mozilla/5.0' "$u" -o fetched/s3/S3_patient.avi && break || true
+          done
+
+          find fetched -type f -printf '%p\t%s bytes\n' | sort | tee fetched/FILE_LIST.txt
+          file $(find fetched -type f | grep -Ei '\.(avi|wav|mp3|mp4|zip)$' || true) | tee fetched/FILE_TYPES.txt || true
+
+      - name: Upload fetched media
+        uses: actions/upload-artifact@v4
+        with:
+          name: hocm-s3-final-media
+          path: fetched
+          retention-days: 7
