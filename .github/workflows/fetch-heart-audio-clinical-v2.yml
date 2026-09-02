@@ -1,0 +1,70 @@
+name: Fetch Real Clinical Auscultation Sources V2
+
+on:
+  push:
+    branches: [heart-simulator-control-v4-build]
+    paths:
+      - '.github/workflows/fetch-heart-audio-clinical-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch real clinical sources
+        run: |
+          set -euxo pipefail
+          mkdir -p out/BMD out/COMMONS out/PMC out/MENDELEY
+
+          # BMD-HS: real patients, four standard valve sites, selected single-diagnosis subjects + MVP + normal.
+          for spec in 'N_089' 'AS_005' 'AR_016' 'MS_006' 'MR_002' 'MD_022'; do
+            for site in Aor Pul Tri Mit; do
+              curl -L --fail --retry 3 -o "out/BMD/${spec}_sup_${site}.wav" \
+                "https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/train/${spec}_sup_${site}.wav"
+            done
+          done
+          curl -L --fail --retry 3 -o out/BMD/README.md 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/README.md'
+          curl -L --fail --retry 3 -o out/BMD/train.csv 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/train.csv'
+          curl -L --fail --retry 3 -o out/BMD/LICENSE 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/LICENSE'
+
+          # Wikimedia Commons human auscultation sources.
+          curl -L --fail --retry 3 -o out/COMMONS/AfibO.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/AfibO.ogg'
+          curl -L --fail --retry 3 -o out/COMMONS/Heartbeat_mitral_valve_150_bpm.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heartbeat%20mitral%20valve%20150%20bpm.ogg'
+
+          # PMC OA packages. Save OA metadata and extract packages when available.
+          for pmc in PMC6283745 PMC6761354 PMC10398423; do
+            curl -L --fail --retry 3 -o "out/PMC/${pmc}_oa.xml" "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=${pmc}"
+            href=$(python3 - "$pmc" <<'PY'
+import re,sys
+p=f'out/PMC/{sys.argv[1]}_oa.xml'
+s=open(p,encoding='utf-8',errors='ignore').read()
+m=re.search(r'href="([^"]+\.tar\.gz)"',s)
+print(m.group(1) if m else '')
+PY
+)
+            if [ -n "$href" ]; then
+              curl -L --fail --retry 3 -o "out/PMC/${pmc}.tar.gz" "$href"
+              mkdir -p "out/PMC/${pmc}"
+              tar -xzf "out/PMC/${pmc}.tar.gz" -C "out/PMC/${pmc}" || true
+            fi
+          done
+
+          # Mendeley public API discovery for TR dataset.
+          for url in \
+            'https://data.mendeley.com/public-api/datasets/jfbdvjw6sf/versions/1/files' \
+            'https://api.datacite.org/dois/10.17632/jfbdvjw6sf.1'; do
+            name=$(echo "$url" | sed 's#[^A-Za-z0-9]#_#g')
+            curl -L --fail --retry 2 -o "out/MENDELEY/${name}.json" "$url" || true
+          done
+
+          find out -type f -maxdepth 8 -printf '%p\t%s bytes\n' | sort > out/FILES.txt
+          sha256sum $(find out -type f ! -name SHA256SUMS.txt | sort) > out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-clinical-auscultation-sources-v2
+          path: out/
+          retention-days: 7
