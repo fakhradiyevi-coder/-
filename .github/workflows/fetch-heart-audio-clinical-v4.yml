@@ -1,0 +1,53 @@
+name: Fetch Heart Clinical Audio V4
+
+on:
+  push:
+    branches:
+      - heart-simulator-control-v4-build
+    paths:
+      - '.github/workflows/fetch-heart-audio-clinical-v4.yml'
+      - 'heart-audio-clinical-v4-trigger.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download clinical datasets and discover supplements
+        run: |
+          set -euxo pipefail
+          mkdir -p out/MENDELEY out/PAGES
+          # Complete public Mendeley dataset ZIP (CC BY 4.0)
+          curl -L --fail --retry 3 'https://data.mendeley.com/public-api/zip/jfbdvjw6sf/download/1' -o out/MENDELEY/regurgitation_dataset.zip
+          unzip -q out/MENDELEY/regurgitation_dataset.zip -d out/MENDELEY/extracted
+
+          # Publisher/article HTML for supplement URL discovery.
+          curl -L --retry 3 'https://www.jstage.jst.go.jp/article/internalmedicine/58/17/58_2731-19/_article' -o out/PAGES/s3_jstage.html || true
+          curl -L --retry 3 'https://pmc.ncbi.nlm.nih.gov/articles/PMC6283745/' -o out/PAGES/hocm_pmc.html || true
+          curl -L --retry 3 'https://academic.oup.com/ehjcr/article/7/8/ytad333/7236622' -o out/PAGES/pericardial_oup.html || true
+          curl -L --retry 3 'https://academic.oup.com/ehjcr/article/6/8/ytac330/6657649' -o out/PAGES/s4_avblock_oup.html || true
+
+          python3 - <<'PY'
+          import re, pathlib, html
+          root=pathlib.Path('out/PAGES')
+          for p in root.glob('*.html'):
+              s=html.unescape(p.read_text(errors='ignore'))
+              hits=[]
+              for pat in [r'https?://[^\"\'<> ]+\.(?:mp3|mp4|avi|wav|zip)(?:\?[^\"\'<> ]*)?',
+                          r'href=[\"\']([^\"\']*(?:supp|suppl|mmc|media|movie|audio)[^\"\']*)[\"\']']:
+                  for m in re.finditer(pat,s,re.I):
+                      val=m.group(1) if m.lastindex else m.group(0)
+                      if val not in hits: hits.append(val)
+              (p.with_suffix('.links.txt')).write_text('\n'.join(hits))
+          PY
+          find out -maxdepth 6 -type f -printf '%p\t%s bytes\n' | sort > out/FILE_LIST.txt
+          find out -type f -print0 | sort -z | xargs -0 sha256sum > out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heart-clinical-audio-v4
+          path: out/
+          retention-days: 7
