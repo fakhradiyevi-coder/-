@@ -20,7 +20,7 @@ jobs:
       - name: Fetch sources
         run: |
           set -euxo pipefail
-          mkdir -p sources
+          mkdir -p sources/BMD
           curl -L --fail --retry 3 -o sources/wellcome_heart_sounds.mp3 'https://archive.org/download/0056-0000-8039-0000-0-0000-0000-0/0056-0000-8039-0000-0-0000-0000-0.mp3'
           curl -L --fail --retry 3 -o sources/commons_PS_S7.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S7.ogg'
           curl -L --fail --retry 3 -o sources/commons_VSD_S9.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S9.ogg'
@@ -28,8 +28,18 @@ jobs:
           curl -L --fail --retry 3 -o sources/commons_MVP_S5.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S5.ogg'
           curl -L --fail --retry 3 -o sources/commons_AS_S6.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S6.ogg'
           curl -L --fail --retry 3 -o sources/commons_PVC.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Premature%20ventricular%20contractions%2C%20recorded%20on%20cardiac%20event%20monitor.ogg' || true
+          curl -L --fail --retry 3 -o sources/commons_AF.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/AfibO.ogg'
+          curl -L --fail --retry 3 -o sources/commons_TACHY_150_MITRAL.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heartbeat%20mitral%20valve%20150%20bpm.ogg'
+          for spec in N_089 AS_005 AR_016 MS_006 MR_002 MD_022; do
+            for site in Aor Pul Tri Mit; do
+              curl -L --fail --retry 3 -o "sources/BMD/${spec}_sup_${site}.wav" "https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/train/${spec}_sup_${site}.wav"
+            done
+          done
+          curl -L --fail --retry 3 -o sources/BMD/README.md 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/README.md'
+          curl -L --fail --retry 3 -o sources/BMD/train.csv 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/train.csv'
+          curl -L --fail --retry 3 -o sources/BMD/LICENSE 'https://raw.githubusercontent.com/sani002/BMD-HS-Dataset/main/LICENSE'
           ffprobe -hide_banner sources/wellcome_heart_sounds.mp3 2> sources/wellcome_ffprobe.txt || true
-          sha256sum sources/* > sources/SHA256SUMS.txt
+          find sources -type f -print0 | sort -z | xargs -0 sha256sum > sources/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: open-heart-audio-sources
