@@ -1,13 +1,89 @@
 name: Build Heart Simulator Control 4.0 APK
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - heart-simulator-control-v4-build
 
 permissions:
   contents: read
 
 jobs:
-  hold:
+  build-apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - run: echo "Source upload staging"
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Reconstruct and verify audited sources
+        run: |
+          set -euo pipefail
+          SRC="heart-simulator-direct/ANDROID_APP"
+          PARTS="heart-simulator-direct/mainactivity_parts"
+          MAIN="$SRC/app/src/main/java/kz/asfendiyarov/heartsimulator/MainActivity.java"
+          cat "$PARTS/MainActivity.part00" "$PARTS/MainActivity.part01" "$PARTS/MainActivity.part02" > "$MAIN"
+          cd "$SRC"
+          cat > /tmp/source.sha256 <<'EOF'
+          3b78a01e75e5e30aabc8be2f64c03d9de5e966c30b56139aa7cae4c23608bee9  settings.gradle
+          c3c0cf04da0fc239f391c774554d97d890018ab6e37e87cc62f6070d0c8c9909  build.gradle
+          cc38bc495ca4e4d7fa2fe7c9c1112f36af7a63fbf4fc3e7a088e215942403385  gradle.properties
+          1389813b5db362b6844b28bfc7d9dd1cd3d72661e71ae25c19ec74fc1183c2b3  app/build.gradle
+          b4ebde184d80e43cc332e2f639cadc64fc80a8c83d6b5b75667bad9c7a2f3eb0  app/src/main/AndroidManifest.xml
+          ba9cdc7b3e29b1b73de5bd1a5bbfc5e3ac15d70fa72273ae51a8db6d014c234b  app/src/main/java/kz/asfendiyarov/heartsimulator/ApiClient.java
+          1cfe740a0c9046faa007f159725e2d8762533974911cc305564d928d44af4ce8  app/src/main/java/kz/asfendiyarov/heartsimulator/DeviceState.java
+          bc2f160e3e29240e4e8f8fa0ba39f3489ba17cdb71856d7fab4a2ae5b972178a  app/src/main/java/kz/asfendiyarov/heartsimulator/AuscultationMapView.java
+          3c1e8736f21a32a56067a609eb49e6c998845ca2052734f66fb340e3b6c3ecec  app/src/main/java/kz/asfendiyarov/heartsimulator/BrandMarkView.java
+          ee663c3849132d826a9e6f22d4462fa6bdcb108db8e79a86363c1467576f0953  app/src/main/java/kz/asfendiyarov/heartsimulator/MainActivity.java
+          6c41b25b814cc686ab01d3d58358346e73f0f8c15ded6f2defbe87a963d902fd  app/src/main/res/drawable/ic_app_icon.xml
+          04392577e37aaeafdb797c93ce5776902043e11c9fddf75038e28785c1ea23e5  app/src/main/res/values/colors.xml
+          57840856b7f1411233e0f00a92ad27192a9179abcaa695f947f74d4ddb243630  app/src/main/res/values/strings.xml
+          fea0f3a059f7965829b1d895fbead26f91b73e7bdf1392544fa89ab1edb5a139  app/src/main/res/values/styles.xml
+          c2859edb499ad9933e6e36e77035c429041f00a4e6e0a1dad18079703a50bb58  app/src/main/res/xml/network_security_config.xml
+          EOF
+          sed -i 's/^          //' /tmp/source.sha256
+          sha256sum -c /tmp/source.sha256
+
+      - name: Lint and build installable APK
+        working-directory: heart-simulator-direct/ANDROID_APP
+        run: |
+          set -euo pipefail
+          gradle --no-daemon clean lintDebug assembleDebug
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          cp "$APK" Heart_Auscultation_4.0.0.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose Heart_Auscultation_4.0.0.apk
+          "$ANDROID_HOME/build-tools/34.0.0/zipalign" -c -v 4 Heart_Auscultation_4.0.0.apk
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging Heart_Auscultation_4.0.0.apk | tee apk-badging.txt
+          grep -q "package: name='kz.asfendiyarov.heartsimulator'" apk-badging.txt
+          grep -q "versionName='4.0.0'" apk-badging.txt
+          grep -q "sdkVersion:'26'" apk-badging.txt
+          sha256sum Heart_Auscultation_4.0.0.apk > Heart_Auscultation_4.0.0.sha256.txt
+
+      - name: Upload APK and QA evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: Heart-Auscultation-4.0.0-APK
+          path: |
+            heart-simulator-direct/ANDROID_APP/Heart_Auscultation_4.0.0.apk
+            heart-simulator-direct/ANDROID_APP/Heart_Auscultation_4.0.0.sha256.txt
+            heart-simulator-direct/ANDROID_APP/apk-badging.txt
+            heart-simulator-direct/ANDROID_APP/app/build/reports/lint-results-debug.html
+            heart-simulator-direct/ANDROID_APP/app/build/reports/lint-results-debug.txt
+          if-no-files-found: error
+          retention-days: 14
