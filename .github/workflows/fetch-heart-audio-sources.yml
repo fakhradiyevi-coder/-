@@ -27,7 +27,7 @@ jobs:
           curl -L --fail --retry 3 -o sources/commons_TOF_S8.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S8.ogg'
           curl -L --fail --retry 3 -o sources/commons_MVP_S5.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S5.ogg'
           curl -L --fail --retry 3 -o sources/commons_AS_S6.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S6.ogg'
-          curl -L --fail --retry 3 -o sources/commons_PVC.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Premature ventricular contractions, recorded on cardiac event monitor.ogg'
+          curl -L --fail --retry 3 -o sources/commons_PVC.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Premature%20ventricular%20contractions%2C%20recorded%20on%20cardiac%20event%20monitor.ogg' || true
           ffprobe -hide_banner sources/wellcome_heart_sounds.mp3 2> sources/wellcome_ffprobe.txt || true
           sha256sum sources/* > sources/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
