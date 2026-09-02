@@ -3,6 +3,7 @@ package kz.asfendiyarov.heartsimulator;
 import android.content.*;
 import android.graphics.*;
 import android.view.*;
+import java.util.*;
 
 public class AuscultationMapView extends View {
     private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -34,7 +35,7 @@ public class AuscultationMapView extends View {
                     ModuleState m=state.modules.get(i);
                     if(m.trackMatch) color=Color.rgb(48,151,83);
                     else if(m.feedbackOk) color=Color.rgb(211,163,45);
-                    else if(m.checked) color=Color.rgb(84,118,188);
+                    else if(m.checked) color=Color.rgb(84,118,188); // command channel may work even if TX query is unconfirmed
                     else color=Color.rgb(158,148,164);
                 }else color=Color.rgb(84,118,188);
             }
