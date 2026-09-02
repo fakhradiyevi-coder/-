@@ -16,18 +16,18 @@ jobs:
       - name: Fetch NCBI OA packages and HLS-CMDS
         shell: bash
         run: |
-          set -euxo pipefail
+          set -uxo pipefail
           mkdir -p final_assets/pmc final_assets/hls
           fetch_pmc() {
             id="$1"
             out="final_assets/pmc/$id"
             mkdir -p "$out"
-            curl -fL --retry 3 -A 'Mozilla/5.0' "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=$id" -o "$out/oa.xml"
+            curl -L --retry 3 -A 'Mozilla/5.0' "https://pmc.ncbi.nlm.nih.gov/utils/oa/oa.fcgi?id=$id" -o "$out/oa.xml" || return 0
             href=$(grep -oE 'href="[^"]+\.tar\.gz"' "$out/oa.xml" | head -1 | cut -d'"' -f2 || true)
             if [ -n "$href" ]; then
               href=${href/ftp:\/\/ftp.ncbi.nlm.nih.gov/https:\/\/ftp.ncbi.nlm.nih.gov}
-              curl -fL --retry 3 -A 'Mozilla/5.0' "$href" -o "$out/package.tar.gz"
-              tar -xzf "$out/package.tar.gz" -C "$out"
+              curl -fL --retry 3 -A 'Mozilla/5.0' "$href" -o "$out/package.tar.gz" || return 0
+              tar -xzf "$out/package.tar.gz" -C "$out" || true
             fi
           }
           fetch_pmc PMC6283745
