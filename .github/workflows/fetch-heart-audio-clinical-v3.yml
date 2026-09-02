@@ -1,0 +1,53 @@
+name: Fetch Heart Clinical Audio V3
+
+on:
+  push:
+    branches:
+      - heart-simulator-control-v4-build
+    paths:
+      - '.github/workflows/fetch-heart-audio-clinical-v3.yml'
+      - 'heart-audio-clinical-v3-trigger.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-clinical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch OA packages and Mendeley file index
+        run: |
+          set -euxo pipefail
+          mkdir -p clinical_v3/PMC clinical_v3/MENDELEY
+          python3 - <<'PY'
+          import re, pathlib, subprocess, urllib.request
+          out=pathlib.Path('clinical_v3/PMC')
+          pmcids=['PMC6761354','PMC10398423','PMC9395133','PMC6283745']
+          for pmc in pmcids:
+              d=out/pmc; d.mkdir(parents=True,exist_ok=True)
+              meta=d/'oa.xml'
+              try:
+                  urllib.request.urlretrieve(f'https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id={pmc}', meta)
+                  txt=meta.read_text(errors='ignore')
+                  m=re.search(r'href="([^"]+\.tar\.gz)"',txt) or re.search(r'href="([^"]+\.tgz)"',txt)
+                  if not m:
+                      (d/'NO_OA_PACKAGE.txt').write_text(txt)
+                      continue
+                  url=m.group(1).replace('ftp://ftp.ncbi.nlm.nih.gov/','https://ftp.ncbi.nlm.nih.gov/')
+                  pkg=d/'package.tar.gz'
+                  urllib.request.urlretrieve(url,pkg)
+                  subprocess.run(['tar','-xzf',str(pkg),'-C',str(d)],check=True)
+              except Exception as e:
+                  (d/'ERROR.txt').write_text(repr(e))
+          PY
+          curl -L --fail --retry 3 'https://data.mendeley.com/public-api/datasets/jfbdvjw6sf/files?folder_id=root&version=1' -o clinical_v3/MENDELEY/root_files.json || true
+          curl -L --fail --retry 3 'https://data.mendeley.com/datasets/jfbdvjw6sf/1' -o clinical_v3/MENDELEY/page.html || true
+          find clinical_v3 -maxdepth 5 -type f -printf '%p\t%s bytes\n' | sort > clinical_v3/FILE_LIST.txt
+          find clinical_v3 -type f -print0 | sort -z | xargs -0 sha256sum > clinical_v3/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heart-clinical-audio-v3
+          path: clinical_v3/
+          retention-days: 7
