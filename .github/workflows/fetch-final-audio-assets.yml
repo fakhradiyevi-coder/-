@@ -1,0 +1,47 @@
+name: Fetch Final Heart Audio Assets
+
+on:
+  push:
+    branches: [heart-simulator-control-v4-build]
+    paths:
+      - '.github/workflows/fetch-final-audio-assets.yml'
+      - 'trigger-final-audio-assets.txt'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch NCBI OA packages and HLS-CMDS
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p final_assets/pmc final_assets/hls
+          fetch_pmc() {
+            id="$1"
+            out="final_assets/pmc/$id"
+            mkdir -p "$out"
+            curl -fL --retry 3 -A 'Mozilla/5.0' "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=$id" -o "$out/oa.xml"
+            href=$(grep -oE 'href="[^"]+\.tar\.gz"' "$out/oa.xml" | head -1 | cut -d'"' -f2 || true)
+            if [ -n "$href" ]; then
+              href=${href/ftp:\/\/ftp.ncbi.nlm.nih.gov/https:\/\/ftp.ncbi.nlm.nih.gov}
+              curl -fL --retry 3 -A 'Mozilla/5.0' "$href" -o "$out/package.tar.gz"
+              tar -xzf "$out/package.tar.gz" -C "$out"
+            fi
+          }
+          fetch_pmc PMC6283745
+          fetch_pmc PMC6761354
+          fetch_pmc PMC10398423
+          curl -fL --retry 3 'https://raw.githubusercontent.com/Torabiy/HLS-CMDS/ad9a5b08c05f31a61096fec4ab4fde6b0ff1f45c/Dataset.v2/HS.zip' -o final_assets/hls/HS.zip
+          curl -fL --retry 3 'https://raw.githubusercontent.com/Torabiy/HLS-CMDS/ad9a5b08c05f31a61096fec4ab4fde6b0ff1f45c/Dataset.v2/HS.csv' -o final_assets/hls/HS.csv
+          curl -fL --retry 3 'https://raw.githubusercontent.com/Torabiy/HLS-CMDS/ad9a5b08c05f31a61096fec4ab4fde6b0ff1f45c/LICENSE' -o final_assets/hls/LICENSE
+          unzip -q final_assets/hls/HS.zip -d final_assets/hls/extracted
+          find final_assets -type f -printf '%p\t%s bytes\n' | sort | tee final_assets/FILE_LIST.txt
+          file $(find final_assets -type f | grep -Ei '\.(mp3|wav|avi|mp4|zip)$' || true) | tee final_assets/FILE_TYPES.txt || true
+      - name: Upload assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-heart-audio-assets
+          path: final_assets
+          retention-days: 7
