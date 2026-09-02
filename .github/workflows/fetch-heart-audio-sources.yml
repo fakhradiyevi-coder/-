@@ -1,0 +1,37 @@
+name: Fetch Open Heart Audio Sources
+
+on:
+  push:
+    branches:
+      - heart-simulator-control-v4-build
+    paths:
+      - '.github/workflows/fetch-heart-audio-sources.yml'
+      - 'heart-audio-fetch-trigger.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch sources
+        run: |
+          set -euxo pipefail
+          mkdir -p sources
+          curl -L --fail --retry 3 -o sources/wellcome_heart_sounds.mp3 'https://archive.org/download/0056-0000-8039-0000-0-0000-0000-0/0056-0000-8039-0000-0-0000-0000-0.mp3'
+          curl -L --fail --retry 3 -o sources/commons_PS_S7.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S7.ogg'
+          curl -L --fail --retry 3 -o sources/commons_VSD_S9.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S9.ogg'
+          curl -L --fail --retry 3 -o sources/commons_TOF_S8.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S8.ogg'
+          curl -L --fail --retry 3 -o sources/commons_MVP_S5.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S5.ogg'
+          curl -L --fail --retry 3 -o sources/commons_AS_S6.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Heart-energy-signature-spectrogram-for-cardiovascular-diagnosis-1475-925X-6-16-S6.ogg'
+          curl -L --fail --retry 3 -o sources/commons_PVC.ogg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Premature ventricular contractions, recorded on cardiac event monitor.ogg'
+          ffprobe -hide_banner sources/wellcome_heart_sounds.mp3 2> sources/wellcome_ffprobe.txt || true
+          sha256sum sources/* > sources/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-heart-audio-sources
+          path: sources/
+          retention-days: 7
