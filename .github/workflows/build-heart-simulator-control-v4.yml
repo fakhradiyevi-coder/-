@@ -24,7 +24,7 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses >/dev/null
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
 
       - uses: gradle/actions/setup-gradle@v4
@@ -33,9 +33,12 @@ jobs:
 
       - name: Expand audited Android project
         run: |
+          set -euo pipefail
           rm -rf build-heart-simulator
           mkdir build-heart-simulator
-          unzip -q heart-simulator-control-v4/project.zip -d build-heart-simulator
+          base64 -d heart-simulator-control-v4/project.zip > /tmp/heart-simulator-project.zip
+          unzip -t /tmp/heart-simulator-project.zip
+          unzip -q /tmp/heart-simulator-project.zip -d build-heart-simulator
           test -f build-heart-simulator/ANDROID_APP/app/build.gradle
 
       - name: Lint and build installable APK
